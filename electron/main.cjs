@@ -13,17 +13,28 @@ let waServer = null;
 
 async function startPHP() {
   return new Promise((resolve) => {
-    phpProcess = spawn(PHP_EXE, ["-S", `0.0.0.0:${PHP_PORT}`, "-t", PHP_ROOT], {
+    const routerFile = path.join(PHP_ROOT, "router.php");
+    phpProcess = spawn(PHP_EXE, ["-S", `0.0.0.0:${PHP_PORT}`, "-t", PHP_ROOT, routerFile], {
+      cwd: PHP_ROOT,
       windowsHide: true,
-      stdio: "pipe",
+      stdio: ["pipe", "pipe", "pipe"],
     });
+
+    let isReady = false;
 
     phpProcess.stderr.on("data", (d) => {
       const msg = d.toString();
-      if (msg.includes("Development Server") || msg.includes("started")) {
-        console.log("[PHP] Servidor iniciado en puerto", PHP_PORT);
+      console.log("[PHP]", msg.trim());
+      if (!isReady && (msg.includes("Development Server") || msg.includes("listening"))) {
+        isReady = true;
+        console.log("[PHP] ✓ Servidor iniciado en puerto", PHP_PORT);
         resolve();
       }
+    });
+
+    phpProcess.stdout.on("data", (d) => {
+      const msg = d.toString();
+      if (msg.trim()) console.log("[PHP]", msg.trim());
     });
 
     phpProcess.on("error", (e) => {
@@ -31,18 +42,23 @@ async function startPHP() {
       resolve();
     });
 
-    // Resolver después de 1.5s
-    setTimeout(resolve, 1500);
+    // Resolver después de 2s si no se detecta startup message
+    setTimeout(() => {
+      if (!isReady) {
+        isReady = true;
+        resolve();
+      }
+    }, 2000);
   });
 }
 
 async function startWAService() {
   try {
-    const mod = await import(pathToFileURL(path.join(__dirname, "../whatsapp-service.mjs")).href);
+    const mod = await import(pathToFileURL(path.join(__dirname, "../backend/whatsapp-server.mjs")).href);
     waServer = await mod.startWAServer(WA_PORT);
-    console.log("[WA] Servicio iniciado en puerto", WA_PORT);
+    console.log("[WA] ✓ Servicio iniciado en puerto", WA_PORT);
   } catch (e) {
-    console.error("[WA] No se pudo iniciar servicio WhatsApp:", e.message);
+    console.error("[WA] ✗ No se pudo iniciar servicio WhatsApp:", e.message);
   }
 }
 

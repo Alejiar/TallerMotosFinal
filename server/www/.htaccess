@@ -1,0 +1,35 @@
+<?php
+/**
+ * MotoFlow Pro - Router SPA
+ * Maneja todas las rutas de la aplicación
+ */
+
+require_once __DIR__ . '/api/config.php';
+require_once __DIR__ . '/api/db.php';
+
+// Inicializar BD
+initDatabase();
+
+// Obtener ruta solicitada
+$request = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$request = str_replace('/api', '/api', $request);
+
+// Si es una petición API, no hacer nada (php enruta automáticamente)
+if (strpos($request, '/api/') === 0) {
+    return false; // Dejar que PHP maneje automáticamente el archivo .php
+}
+
+// Si es una ruta de archivo estático (css, js, uploads), dejar pasar
+if (preg_match('/\.(css|js|jpg|png|gif|svg|woff|woff2|ttf)$/i', $request)) {
+    return false;
+}
+
+// Si no termina en slash, intenta buscar el archivo directo
+if (file_exists(__DIR__ . $request)) {
+    return false;
+}
+
+// Sino, servir index.html (SPA fallback)
+require __DIR__ . '/index.html';
+
+?>

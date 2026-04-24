@@ -1,0 +1,211 @@
+<?php
+/**
+ * MotoFlow Pro - Inicialización de BD (SQLite)
+ * Este archivo crea las tablas si no existen
+ */
+
+require_once __DIR__ . '/config.php';
+
+function initDatabase() {
+    global $pdo;
+    
+    $tables = [
+        'usuarios' => "
+            CREATE TABLE IF NOT EXISTS usuarios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password TEXT NOT NULL,
+                name TEXT NOT NULL,
+                role TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1
+            )
+        ",
+        'clientes' => "
+            CREATE TABLE IF NOT EXISTS clientes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                phone TEXT,
+                notes TEXT,
+                active INTEGER NOT NULL DEFAULT 1,
+                createdAt TEXT NOT NULL,
+                imagePath TEXT
+            )
+        ",
+        'motos' => "
+            CREATE TABLE IF NOT EXISTS motos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customerId INTEGER NOT NULL,
+                plate TEXT NOT NULL,
+                model TEXT,
+                year TEXT,
+                color TEXT,
+                createdAt TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                imagePath TEXT,
+                FOREIGN KEY(customerId) REFERENCES clientes(id) ON DELETE CASCADE
+            )
+        ",
+        'ordenes' => "
+            CREATE TABLE IF NOT EXISTS ordenes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                number TEXT NOT NULL UNIQUE,
+                customerId INTEGER NOT NULL,
+                bikeId INTEGER NOT NULL,
+                problem TEXT,
+                status TEXT NOT NULL,
+                entryDate TEXT NOT NULL,
+                estimatedDate TEXT,
+                parts TEXT NOT NULL DEFAULT '[]',
+                services TEXT NOT NULL DEFAULT '[]',
+                evidences TEXT NOT NULL DEFAULT '[]',
+                locked INTEGER NOT NULL DEFAULT 0,
+                total REAL NOT NULL DEFAULT 0,
+                notes TEXT,
+                active INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY(customerId) REFERENCES clientes(id) ON DELETE CASCADE,
+                FOREIGN KEY(bikeId) REFERENCES motos(id) ON DELETE CASCADE
+            )
+        ",
+        'detalle_orden' => "
+            CREATE TABLE IF NOT EXISTS detalle_orden (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                orderId INTEGER NOT NULL,
+                itemType TEXT NOT NULL,
+                name TEXT NOT NULL,
+                qty REAL NOT NULL DEFAULT 0,
+                unitPrice REAL NOT NULL DEFAULT 0,
+                FOREIGN KEY(orderId) REFERENCES ordenes(id) ON DELETE CASCADE
+            )
+        ",
+        'productos' => "
+            CREATE TABLE IF NOT EXISTS productos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                stock INTEGER NOT NULL DEFAULT 0,
+                minStock INTEGER NOT NULL DEFAULT 0,
+                shelf TEXT,
+                price REAL NOT NULL DEFAULT 0,
+                cost REAL NOT NULL DEFAULT 0,
+                supplierId INTEGER,
+                active INTEGER NOT NULL DEFAULT 1,
+                createdAt TEXT NOT NULL,
+                imagePath TEXT,
+                FOREIGN KEY(supplierId) REFERENCES proveedores(id) ON DELETE SET NULL
+            )
+        ",
+        'proveedores' => "
+            CREATE TABLE IF NOT EXISTS proveedores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                phone TEXT,
+                productsHint TEXT,
+                active INTEGER NOT NULL DEFAULT 1
+            )
+        ",
+        'compras' => "
+            CREATE TABLE IF NOT EXISTS compras (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplierId INTEGER,
+                date TEXT NOT NULL,
+                total REAL NOT NULL DEFAULT 0,
+                items TEXT NOT NULL DEFAULT '[]',
+                active INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY(supplierId) REFERENCES proveedores(id) ON DELETE SET NULL
+            )
+        ",
+        'empleados' => "
+            CREATE TABLE IF NOT EXISTS empleados (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                role TEXT,
+                phone TEXT,
+                active INTEGER NOT NULL DEFAULT 1
+            )
+        ",
+        'pagos_empleados' => "
+            CREATE TABLE IF NOT EXISTS pagos_empleados (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employeeId INTEGER NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                date TEXT NOT NULL,
+                note TEXT,
+                FOREIGN KEY(employeeId) REFERENCES empleados(id) ON DELETE CASCADE
+            )
+        ",
+        'caja' => "
+            CREATE TABLE IF NOT EXISTS caja (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                type TEXT NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                concept TEXT,
+                refType TEXT,
+                refId INTEGER
+            )
+        ",
+        'ventas' => "
+            CREATE TABLE IF NOT EXISTS ventas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                number TEXT NOT NULL UNIQUE,
+                date TEXT NOT NULL,
+                items TEXT NOT NULL DEFAULT '[]',
+                total REAL NOT NULL DEFAULT 0,
+                method TEXT NOT NULL,
+                type TEXT NOT NULL,
+                orderId INTEGER
+            )
+        ",
+        'notas' => "
+            CREATE TABLE IF NOT EXISTS notas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                body TEXT,
+                createdAt TEXT NOT NULL,
+                done INTEGER NOT NULL DEFAULT 0
+            )
+        ",
+        'templates' => "
+            CREATE TABLE IF NOT EXISTS templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT NOT NULL UNIQUE,
+                label TEXT NOT NULL,
+                body TEXT NOT NULL
+            )
+        ",
+        'counters' => "
+            CREATE TABLE IF NOT EXISTS counters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT NOT NULL UNIQUE,
+                value INTEGER NOT NULL DEFAULT 0
+            )
+        ",
+        'whatsapp_mensajes' => "
+            CREATE TABLE IF NOT EXISTS whatsapp_mensajes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phone TEXT NOT NULL,
+                message TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                createdAt TEXT NOT NULL,
+                sentAt TEXT,
+                error TEXT
+            )
+        "
+    ];
+    
+    try {
+        foreach ($tables as $tableName => $sql) {
+            $pdo->exec($sql);
+        }
+        return ['success' => true, 'message' => 'BD inicializada correctamente'];
+    } catch (Exception $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+}
+
+// Inicializar si es necesario
+if (php_sapi_name() !== 'cli') {
+    // Ejecutar solo desde CLI o en request específico
+}
+
+?>
