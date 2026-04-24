@@ -9,7 +9,7 @@ import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 export default function Ventas() {
-  const products = useLiveQuery(() => db.products.filter((p) => p.active).toArray(), []) ?? [];
+  const products = useLiveQuery(() => db.products.toArray(), []) ?? [];
   const [cart, setCart] = useState<SaleItem[]>([]);
   const [q, setQ] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("efectivo");
@@ -19,7 +19,11 @@ export default function Ventas() {
   const filtered = useMemo(() => {
     if (!q) return [];
     const t = q.toLowerCase();
-    return products.filter((p) => p.name.toLowerCase().includes(t) || p.code.includes(q)).slice(0, 8);
+    return products.filter((p) =>
+      p.name.toLowerCase().includes(t) ||
+      p.code.toLowerCase().includes(t) ||
+      (p.shelf ?? "").toLowerCase().includes(t)
+    ).slice(0, 20);
   }, [q, products]);
 
   const total = cart.reduce((a, b) => a + b.qty * b.unitPrice, 0);

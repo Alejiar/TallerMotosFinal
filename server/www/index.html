@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MotoFlow Pro</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-card">
+    <h1>MotoFlow <span style="color:var(--primary)">Pro</span></h1>
+    <p>Sistema de gestión para taller de motos</p>
+    <div class="form-group">
+      <label>Usuario</label>
+      <input id="login-user" type="text" placeholder="admin" autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label>Contraseña</label>
+      <input id="login-pass" type="password" placeholder="••••••" autocomplete="current-password">
+    </div>
+    <div id="login-error" class="text-danger text-sm mt-2 hidden"></div>
+    <button class="btn btn-primary w-full mt-3" onclick="doLogin()">Entrar</button>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app" class="hidden">
+  <aside id="sidebar">
+    <div class="logo">🏍️ MotoFlow <span>Pro</span></div>
+    <nav id="nav">
+      <div class="nav-section">Taller</div>
+      <a href="#" data-page="dashboard" class="active"><span>📊</span> Dashboard</a>
+      <a href="#" data-page="motos"><span>🏍️</span> Motos en taller</a>
+      <a href="#" data-page="ordenes"><span>📋</span> Órdenes</a>
+      <div class="nav-section">Negocio</div>
+      <a href="#" data-page="inventario"><span>📦</span> Inventario</a>
+      <a href="#" data-page="ventas"><span>🛒</span> Ventas</a>
+      <a href="#" data-page="facturas"><span>🧾</span> Facturas</a>
+      <a href="#" data-page="caja"><span>💰</span> Caja</a>
+      <div class="nav-section">Gestión</div>
+      <a href="#" data-page="proveedores"><span>🚚</span> Proveedores</a>
+      <a href="#" data-page="compras"><span>🛍️</span> Compras</a>
+      <a href="#" data-page="empleados"><span>👷</span> Empleados</a>
+      <a href="#" data-page="garantias"><span>🛡️</span> Garantías</a>
+      <a href="#" data-page="notas"><span>📝</span> Notas</a>
+      <div class="nav-section">Comunicación</div>
+      <a href="#" data-page="whatsapp" id="nav-wa"><span>💬</span> WhatsApp <span class="badge red hidden" id="wa-badge">!</span></a>
+      <a href="#" data-page="mensajes"><span>✉️</span> Plantillas</a>
+      <a href="#" data-page="buscar"><span>🔍</span> Búsqueda</a>
+      <div class="nav-section"></div>
+      <a href="#" onclick="doLogout()"><span>🚪</span> Cerrar sesión</a>
+    </nav>
+  </aside>
+
+  <div id="content-wrapper">
+    <div id="topbar">
+      <div class="topbar-title" id="topbar-title">Dashboard</div>
+      <div class="user-info" id="topbar-user"></div>
+    </div>
+    <div id="content">
+
+      <!-- DASHBOARD -->
+      <div class="pg active" id="pg-dashboard">
+        <div id="dashboard-content"><div class="spinner"></div></div>
+      </div>
+
+      <!-- MOTOS KANBAN -->
+      <div class="pg" id="pg-motos">
+        <div class="pg-header">
+          <div><h1>Motos en taller</h1><p>Vista Kanban. Arrastra o cambia el estado.</p></div>
+          <button class="btn btn-primary" onclick="openModalNuevaOrden()">+ Nueva orden</button>
+        </div>
+        <div class="kanban" id="kanban-board"></div>
+      </div>
+
+      <!-- ORDENES LISTA -->
+      <div class="pg" id="pg-ordenes">
+        <div class="pg-header">
+          <div><h1>Órdenes</h1></div>
+          <div class="flex gap-2">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;text-transform:none;letter-spacing:0">
+              <input type="checkbox" id="ordenes-todas" onchange="loadOrdenes()"> Mostrar entregadas
+            </label>
+            <button class="btn btn-primary" onclick="openModalNuevaOrden()">+ Nueva orden</button>
+          </div>
+        </div>
+        <div class="card"><div class="table-wrap"><table>
+          <thead><tr><th>N°</th><th>Cliente</th><th>Placa</th><th>Estado</th><th>Ingreso</th><th>Total</th><th>Acciones</th></tr></thead>
+          <tbody id="ordenes-tbody"></tbody>
+        </table></div></div>
+      </div>
+
+      <!-- ORDEN DETALLE -->
+      <div class="pg" id="pg-orden-detalle">
+        <div id="orden-detalle-content"><div class="spinner"></div></div>
+      </div>
+
+      <!-- INVENTARIO -->
+      <div class="pg" id="pg-inventario">
+        <div class="pg-header">
+          <div><h1>Inventario</h1></div>
+          <div class="flex gap-2">
+            <div class="search-box"><input type="text" id="inv-search" placeholder="Buscar por nombre, código o estante..." oninput="filterInventario()" style="width:280px"></div>
+            <button class="btn btn-primary" onclick="openModalProducto()">+ Agregar</button>
+          </div>
+        </div>
+        <div class="card"><div class="table-wrap"><table>
+          <thead><tr><th>Código</th><th>Nombre</th><th>Estante</th><th>Stock</th><th>Mínimo</th><th>Precio</th><th>Costo</th><th>Acciones</th></tr></thead>
+          <tbody id="inv-tbody"></tbody>
+        </table></div></div>
+      </div>
+
+      <!-- VENTAS -->
+      <div class="pg" id="pg-ventas">
+        <div class="pg-header"><div><h1>Ventas mostrador</h1></div></div>
+        <div class="grid-2" style="align-items:start">
+          <div class="card">
+            <h3>Nueva venta</h3>
+            <div class="form-group search-box">
+              <label>Buscar producto</label>
+              <input type="text" id="venta-search" placeholder="Nombre, código o estante..." oninput="buscarProductoVenta()">
+            </div>
+            <div id="venta-resultados" class="hidden" style="border:1px solid var(--border);border-radius:6px;max-height:180px;overflow-y:auto;margin-bottom:12px;"></div>
+            <div id="venta-items"></div>
+            <div class="form-group mt-3">
+              <label>Método de pago</label>
+              <select id="venta-metodo"><option value="efectivo">Efectivo</option><option value="transferencia">Transferencia</option><option value="tarjeta">Tarjeta</option></select>
+            </div>
+            <div class="flex justify-between items-center mt-3" style="font-size:18px;font-weight:700">
+              <span>Total:</span><span id="venta-total">$0</span>
+            </div>
+            <button class="btn btn-success w-full mt-3" onclick="crearVenta()">💳 Registrar venta</button>
+          </div>
+          <div class="card">
+            <h3>Últimas ventas</h3>
+            <div class="table-wrap"><table>
+              <thead><tr><th>N°</th><th>Fecha</th><th>Total</th><th>Método</th></tr></thead>
+              <tbody id="ventas-tbody"></tbody>
+            </table></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FACTURAS -->
+      <div class="pg" id="pg-facturas">
+        <div class="pg-header"><div><h1>Facturas</h1></div></div>
+        <div class="card"><div class="table-wrap"><table>
+          <thead><tr><th>N°</th><th>Fecha</th><th>Tipo</th><th>Orden</th><th>Total</th><th>Método</th></tr></thead>
+          <tbody id="facturas-tbody"></tbody>
+        </table></div></div>
+      </div>
+
+      <!-- PROVEEDORES -->
+      <div class="pg" id="pg-proveedores">
+        <div class="pg-header"><div><h1>Proveedores</h1></div><button class="btn btn-primary" onclick="openModalProveedor()">+ Agregar</button></div>
+        <div class="card"><div class="table-wrap"><table>
+          <thead><tr><th>Nombre</th><th>Teléfono</th><th>Productos</th><th>Acciones</th></tr></thead>
+          <tbody id="prov-tbody"></tbody>
+        </table></div></div>
+      </div>
+
+      <!-- COMPRAS -->
+      <div class="pg" id="pg-compras">
+        <div class="pg-header"><div><h1>Compras a proveedores</h1></div><button class="btn btn-primary" onclick="openModalCompra()">+ Nueva compra</button></div>
+        <div class="card"><div class="table-wrap"><table>
+          <thead><tr><th>Fecha</th><th>Proveedor</th><th>Total</th><th>Productos</th></tr></thead>
+          <tbody id="compras-tbody"></tbody>
+        </table></div></div>
+      </div>
+
+      <!-- EMPLEADOS -->
+      <div class="pg" id="pg-empleados">
+        <div class="pg-header"><div><h1>Empleados</h1></div><button class="btn btn-primary" onclick="openModalEmpleado()">+ Agregar</button></div>
+        <div class="grid-2" style="align-items:start">
+          <div class="card"><div class="table-wrap"><table>
+            <thead><tr><th>Nombre</th><th>Cargo</th><th>Teléfono</th><th>Acciones</th></tr></thead>
+            <tbody id="emp-tbody"></tbody>
+          </table></div></div>
+          <div class="card">
+            <h3>Pagos recientes</h3>
+            <div class="flex gap-2 mb-3">
+              <select id="emp-pago-select" style="flex:1"><option value="">-- Seleccionar empleado --</option></select>
+              <button class="btn btn-primary btn-sm" onclick="openModalPago()">+ Pago</button>
+            </div>
+            <div class="table-wrap"><table>
+              <thead><tr><th>Empleado</th><th>Monto</th><th>Fecha</th><th>Nota</th></tr></thead>
+              <tbody id="pagos-tbody"></tbody>
+            </table></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CAJA -->
+      <div class="pg" id="pg-caja">
+        <div class="pg-header">
+          <div><h1>Caja</h1></div>
+          <div class="flex gap-2">
+            <input type="date" id="caja-fecha" onchange="loadCaja()">
+            <button class="btn btn-primary" onclick="openModalMovimiento()">+ Movimiento</button>
+          </div>
+        </div>
+        <div class="caja-resumen">
+          <div class="caja-box caja-ingresos"><small>Ingresos</small><span id="caja-ing">$0</span></div>
+          <div class="caja-box caja-egresos"><small>Egresos</small><span id="caja-egr">$0</span></div>
+          <div class="caja-box caja-balance"><small>Balance</small><span id="caja-bal">$0</span></div>
+        </div>
+        <div class="card"><div class="table-wrap"><table>
+          <thead><tr><th>Fecha</th><th>Tipo</th><th>Concepto</th><th>Monto</th></tr></thead>
+          <tbody id="caja-tbody"></tbody>
+        </table></div></div>
+      </div>
+
+      <!-- GARANTIAS -->
+      <div class="pg" id="pg-garantias">
+        <div class="pg-header"><div><h1>Garantías</h1></div><button class="btn btn-primary" onclick="openModalGarantia()">+ Nueva</button></div>
+        <div class="card"><div class="table-wrap"><table>
+          <thead><tr><th>Cliente</th><th>Placa</th><th>Descripción</th><th>Vence</th><th>Estado</th><th>Acciones</th></tr></thead>
+          <tbody id="gar-tbody"></tbody>
+        </table></div></div>
+      </div>
+
+      <!-- NOTAS -->
+      <div class="pg" id="pg-notas">
+        <div class="pg-header"><div><h1>Notas y tareas</h1></div><button class="btn btn-primary" onclick="openModalNota()">+ Nueva nota</button></div>
+        <div id="notas-list"></div>
+      </div>
+
+      <!-- MENSAJES/PLANTILLAS -->
+      <div class="pg" id="pg-mensajes">
+        <div class="pg-header"><div><h1>Plantillas de WhatsApp</h1><p>Variables: {cliente} {placa} {moto} {orden} {estado}</p></div></div>
+        <div class="grid-3" id="mensajes-grid"></div>
+      </div>
+
+      <!-- WHATSAPP -->
+      <div class="pg" id="pg-whatsapp">
+        <div class="pg-header"><div><h1>WhatsApp</h1><p>Vincula tu WhatsApp para enviar mensajes automáticos.</p></div></div>
+        <div class="wa-layout">
+          <div class="card" style="text-align:center">
+            <div style="margin-bottom:12px;font-size:15px;font-weight:600">
+              <span class="wa-status-dot disconnected" id="wa-dot"></span>
+              <span id="wa-status-text">Desconectado</span>
+            </div>
+            <div id="wa-qr-wrap" class="hidden"><img id="wa-qr" src="" alt="QR WhatsApp"></div>
+            <div id="wa-spinner" class="spinner hidden"></div>
+            <div id="wa-error" class="text-danger text-sm mt-2 hidden"></div>
+            <div class="flex gap-2 mt-3" style="justify-content:center">
+              <button class="btn btn-primary" id="wa-btn-connect" onclick="waConnect()">Conectar</button>
+              <button class="btn btn-outline hidden" id="wa-btn-disconnect" onclick="waDisconnect()">Desconectar</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Configuración</h3>
+            <div class="form-group" style="display:flex;align-items:center;gap:8px">
+              <input type="checkbox" id="wa-modo-prueba" style="width:auto">
+              <label style="margin:0;text-transform:none;font-size:13px">Modo de prueba (redirige todos los mensajes al número de prueba)</label>
+            </div>
+            <div class="form-group">
+              <label>Número de prueba</label>
+              <input type="text" id="wa-num-prueba" placeholder="3001234567">
+            </div>
+            <div class="flex gap-2">
+              <button class="btn btn-primary btn-sm" onclick="waConfigSave()">Guardar</button>
+              <button class="btn btn-outline btn-sm" onclick="waSendTest()">Enviar mensaje de prueba</button>
+            </div>
+            <hr class="separator">
+            <h3>Historial reciente</h3>
+            <div class="table-wrap"><table>
+              <thead><tr><th>Tipo</th><th>Teléfono</th><th>Estado</th><th>Fecha</th></tr></thead>
+              <tbody id="wa-history-tbody"></tbody>
+            </table></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- BÚSQUEDA GLOBAL -->
+      <div class="pg" id="pg-buscar">
+        <div class="pg-header"><div><h1>Búsqueda global</h1></div></div>
+        <div class="form-group search-box">
+          <input type="text" id="buscar-input" placeholder="Buscar órdenes, clientes, motos o productos..." oninput="doSearch()" style="max-width:500px">
+        </div>
+        <div id="buscar-results"></div>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /content-wrapper -->
+</div><!-- /app -->
+
+<!-- MODALES -->
+<div class="modal-overlay hidden" id="modal-nueva-orden">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-nueva-orden')">✕</button>
+    <h2>Nueva orden / Ingreso de moto</h2>
+    <div class="grid-2">
+      <div class="form-group"><label>Nombre del cliente</label><input id="mo-nombre" type="text" placeholder="Juan Pérez"></div>
+      <div class="form-group"><label>Teléfono</label><input id="mo-telefono" type="text" placeholder="3001234567"></div>
+    </div>
+    <div class="form-group"><label>Placa del vehículo</label><input id="mo-placa" type="text" placeholder="ABC-123" oninput="this.value=this.value.toUpperCase()"></div>
+    <div class="form-group"><label>Reparación que necesita</label><textarea id="mo-problema" rows="3" placeholder="Describe la falla o reparación..."></textarea></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-nueva-orden')">Cancelar</button>
+      <button class="btn btn-primary" onclick="crearOrden()">Crear orden</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="modal-producto">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-producto')">✕</button>
+    <h2 id="modal-producto-title">Producto</h2>
+    <input type="hidden" id="prod-id">
+    <div class="grid-2">
+      <div class="form-group"><label>Código</label><input id="prod-code" type="text" placeholder="REP-001"></div>
+      <div class="form-group"><label>Nombre</label><input id="prod-name" type="text" placeholder="Aceite 4T 1L"></div>
+    </div>
+    <div class="grid-3">
+      <div class="form-group"><label>Stock</label><input id="prod-stock" type="number" min="0" value="0"></div>
+      <div class="form-group"><label>Stock mínimo</label><input id="prod-minstock" type="number" min="0" value="0"></div>
+      <div class="form-group"><label>Estante</label><input id="prod-shelf" type="text" placeholder="A1"></div>
+    </div>
+    <div class="grid-2">
+      <div class="form-group"><label>Precio venta</label><input id="prod-price" type="number" min="0" step="0.01" value="0"></div>
+      <div class="form-group"><label>Costo</label><input id="prod-cost" type="number" min="0" step="0.01" value="0"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-producto')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveProducto()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="modal-proveedor">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-proveedor')">✕</button>
+    <h2>Proveedor</h2>
+    <input type="hidden" id="prov-id">
+    <div class="form-group"><label>Nombre</label><input id="prov-name" type="text"></div>
+    <div class="form-group"><label>Teléfono</label><input id="prov-phone" type="text"></div>
+    <div class="form-group"><label>Productos que vende</label><textarea id="prov-hint" rows="2"></textarea></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-proveedor')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveProveedor()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="modal-compra">
+  <div class="modal" style="max-width:680px">
+    <button class="modal-close" onclick="closeModal('modal-compra')">✕</button>
+    <h2>Nueva compra</h2>
+    <div class="grid-2">
+      <div class="form-group"><label>Proveedor</label><select id="compra-prov"></select></div>
+      <div class="form-group"><label>Fecha</label><input id="compra-fecha" type="date"></div>
+    </div>
+    <div class="form-group search-box"><label>Agregar producto</label><input type="text" id="compra-search" placeholder="Buscar..." oninput="buscarProductoCompra()"></div>
+    <div id="compra-resultados" class="hidden" style="border:1px solid var(--border);border-radius:6px;max-height:160px;overflow-y:auto;margin-bottom:10px;"></div>
+    <div id="compra-items"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-compra')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveCompra()">Registrar compra</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="modal-empleado">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-empleado')">✕</button>
+    <h2>Empleado</h2>
+    <input type="hidden" id="emp-id">
+    <div class="form-group"><label>Nombre</label><input id="emp-name" type="text"></div>
+    <div class="form-group"><label>Cargo</label><input id="emp-role" type="text" placeholder="Mecánico"></div>
+    <div class="form-group"><label>Teléfono</label><input id="emp-phone" type="text"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-empleado')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveEmpleado()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="modal-pago">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-pago')">✕</button>
+    <h2>Registrar pago</h2>
+    <div class="form-group"><label>Monto</label><input id="pago-amount" type="number" min="0" step="0.01"></div>
+    <div class="form-group"><label>Fecha</label><input id="pago-date" type="date"></div>
+    <div class="form-group"><label>Nota</label><input id="pago-note" type="text" placeholder="Quincena, comisión..."></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-pago')">Cancelar</button>
+      <button class="btn btn-primary" onclick="savePago()">Registrar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="modal-movimiento">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-movimiento')">✕</button>
+    <h2>Movimiento de caja</h2>
+    <div class="form-group"><label>Tipo</label><select id="mov-tipo"><option value="ingreso">Ingreso</option><option value="egreso">Egreso</option></select></div>
+    <div class="form-group"><label>Monto</label><input id="mov-amount" type="number" min="0" step="0.01"></div>
+    <div class="form-group"><label>Concepto</label><input id="mov-concept" type="text" placeholder="Describe el movimiento"></div>
+    <div class="form-group"><label>Fecha</label><input id="mov-date" type="date"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-movimiento')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveMovimiento()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="modal-garantia">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-garantia')">✕</button>
+    <h2>Nueva garantía</h2>
+    <input type="hidden" id="gar-id">
+    <div class="form-group"><label>Descripción</label><textarea id="gar-desc" rows="3"></textarea></div>
+    <div class="form-group"><label>Fecha vencimiento</label><input id="gar-expires" type="date"></div>
+    <div class="form-group"><label>Estado</label><select id="gar-status"><option value="activa">Activa</option><option value="reclamada">Reclamada</option><option value="vencida">Vencida</option></select></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-garantia')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveGarantia()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="modal-nota">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-nota')">✕</button>
+    <h2>Nueva nota</h2>
+    <div class="form-group"><label>Título</label><input id="nota-title" type="text" placeholder="Tarea pendiente..."></div>
+    <div class="form-group"><label>Detalle (opcional)</label><textarea id="nota-body" rows="3"></textarea></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-nota')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveNota()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast-container"></div>
+
+<script src="script.js"></script>
+</body>
+</html>

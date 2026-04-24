@@ -1,8 +1,8 @@
 import { NavLink, useLocation } from "react-router-dom";
 import {
-  LayoutDashboard, Bike, Users, ClipboardList, Package, ShoppingCart,
+  LayoutDashboard, Bike, ClipboardList, Package, ShoppingCart,
   Receipt, Truck, ShoppingBasket, Wrench, Wallet, StickyNote, Shield,
-  MessageSquare, LogOut, Menu, X, Search,
+  MessageSquare, MessageCircle, LogOut, Menu, X, Search,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useState } from "react";
@@ -12,7 +12,6 @@ const items = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/motos", icon: Bike, label: "Motos" },
   { to: "/ordenes", icon: ClipboardList, label: "Órdenes" },
-  { to: "/clientes", icon: Users, label: "Clientes" },
   { to: "/inventario", icon: Package, label: "Inventario" },
   { to: "/ventas", icon: ShoppingCart, label: "Ventas" },
   { to: "/facturas", icon: Receipt, label: "Facturas" },
@@ -22,6 +21,7 @@ const items = [
   { to: "/caja", icon: Wallet, label: "Caja" },
   { to: "/garantias", icon: Shield, label: "Garantías" },
   { to: "/notas", icon: StickyNote, label: "Notas" },
+  { to: "/whatsapp", icon: MessageCircle, label: "WhatsApp" },
   { to: "/mensajes", icon: MessageSquare, label: "Plantillas" },
   { to: "/buscar", icon: Search, label: "Búsqueda" },
 ];

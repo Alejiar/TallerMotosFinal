@@ -17,7 +17,7 @@ export default function Buscar() {
   const cus = useMemo(() => term ? customers.filter((c) => c.name.toLowerCase().includes(term) || c.phone.includes(q)) : [], [term, customers, q]);
   const bks = useMemo(() => term ? bikes.filter((b) => b.plate.toLowerCase().includes(term) || b.model.toLowerCase().includes(term)) : [], [term, bikes]);
   const ords = useMemo(() => term ? orders.filter((o) => o.number.toLowerCase().includes(term)) : [], [term, orders]);
-  const prods = useMemo(() => term ? products.filter((p) => p.name.toLowerCase().includes(term) || p.code.includes(q)) : [], [term, products, q]);
+  const prods = useMemo(() => term ? products.filter((p) => p.name.toLowerCase().includes(term) || p.code.toLowerCase().includes(term) || (p.shelf ?? "").toLowerCase().includes(term)) : [], [term, products]);
 
   const customerById = Object.fromEntries(customers.map((c) => [c.id, c]));
   const bikeById = Object.fromEntries(bikes.map((b) => [b.id, b]));
@@ -47,7 +47,7 @@ export default function Buscar() {
             {ords.map((o) => <Link key={o.id} to={`/ordenes/${o.id}`} className="block rounded-md border bg-card p-3 hover:bg-muted/30"><div className="flex justify-between"><span className="font-mono font-semibold">{o.number}</span><span className="text-xs">{dateShort(o.entryDate)}</span></div><div className="text-xs">{customerById[o.customerId]?.name} · {bikeById[o.bikeId]?.plate} · {STATUS_META[o.status].label}</div></Link>)}
           </Section>
           <Section title={`Productos (${prods.length})`}>
-            {prods.map((p) => <div key={p.id} className="rounded-md border bg-card p-3"><div className="flex justify-between"><span className="font-medium">{p.name}</span><span className="font-semibold">{money(p.price)}</span></div><div className="text-xs text-muted-foreground">{p.code} · stock {p.stock}</div></div>)}
+            {prods.map((p) => <div key={p.id} className="rounded-md border bg-card p-3"><div className="flex justify-between"><span className="font-medium">{p.name}</span><span className="font-semibold">{money(p.price)}</span></div><div className="text-xs text-muted-foreground">{p.code} · stock {p.stock}{p.shelf ? ` · estante ${p.shelf}` : ""}</div></div>)}
           </Section>
         </div>
       )}

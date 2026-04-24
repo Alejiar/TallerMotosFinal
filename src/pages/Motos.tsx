@@ -1,7 +1,7 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, OrderStatus, STATUS_META, formatOrderNumber, nextCounter } from "@/lib/db";
 import { dateShort, todayISO } from "@/lib/format";
-import { buildTemplate, waLink } from "@/lib/whatsapp";
+import { buildTemplate, waLink, sendOrOpenMessage } from "@/lib/whatsapp";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -25,61 +25,44 @@ export default function Motos() {
   const bikes = useLiveQuery(() => db.bikes.toArray(), []) ?? [];
 
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({
-    customerId: 0, bikeId: 0, problem: "", estimatedDate: "",
-    newCustomerName: "", newCustomerPhone: "", newPlate: "", newModel: "",
-    mode: "existing" as "existing" | "new",
-  });
+  const [form, setForm] = useState({ name: "", phone: "", plate: "", problem: "" });
 
   const cusMap = useMemo(() => Object.fromEntries(customers.map((c) => [c.id, c])), [customers]);
   const bikeMap = useMemo(() => Object.fromEntries(bikes.map((b) => [b.id, b])), [bikes]);
 
   const createOrder = async () => {
-    let customerId = form.customerId;
-    let bikeId = form.bikeId;
-    if (form.mode === "new") {
-      if (!form.newCustomerName || !form.newCustomerPhone || !form.newPlate) {
-        toast.error("Completa cliente, teléfono y placa");
-        return;
-      }
-      customerId = (await db.customers.add({
-        name: form.newCustomerName.trim(),
-        phone: form.newCustomerPhone.trim(),
-        createdAt: todayISO(),
-      })) as number;
-      bikeId = (await db.bikes.add({
-        customerId,
-        plate: form.newPlate.trim().toUpperCase(),
-        model: form.newModel.trim(),
-        createdAt: todayISO(),
-      })) as number;
-    } else if (!customerId || !bikeId) {
-      toast.error("Selecciona cliente y moto");
+    if (!form.name || !form.phone || !form.plate || !form.problem) {
+      toast.error("Completa todos los campos");
       return;
     }
+    const customerId = (await db.customers.add({
+      name: form.name.trim(),
+      phone: form.phone.trim(),
+      createdAt: todayISO(),
+    })) as number;
+    const bikeId = (await db.bikes.add({
+      customerId,
+      plate: form.plate.trim().toUpperCase(),
+      model: "",
+      createdAt: todayISO(),
+    })) as number;
     const n = await nextCounter("order");
     const number = formatOrderNumber(n);
-    const id = await db.orders.add({
+    await db.orders.add({
       number, customerId, bikeId,
       problem: form.problem,
       status: "ingresada",
       entryDate: todayISO(),
-      estimatedDate: form.estimatedDate || undefined,
       parts: [], services: [], evidences: [],
       locked: false, total: 0,
     });
     toast.success(`Orden ${number} creada`);
     setOpen(false);
-    setForm({ customerId: 0, bikeId: 0, problem: "", estimatedDate: "", newCustomerName: "", newCustomerPhone: "", newPlate: "", newModel: "", mode: "existing" });
+    setForm({ name: "", phone: "", plate: "", problem: "" });
 
     // WhatsApp ingreso
-    const c = await db.customers.get(customerId);
-    const b = await db.bikes.get(bikeId);
-    if (c) {
-      const msg = await buildTemplate("ingreso", { cliente: c.name, placa: b?.plate, moto: b?.model, orden: number });
-      window.open(waLink(c.phone, msg), "_blank");
-    }
-    return id;
+    const msg = await buildTemplate("ingreso", { cliente: form.name, placa: form.plate.toUpperCase(), moto: "", orden: number });
+    await sendOrOpenMessage(form.phone, msg);
   };
 
   const changeStatus = async (orderId: number, status: OrderStatus) => {
@@ -92,7 +75,7 @@ export default function Motos() {
     if (c) {
       const key = status === "lista" ? "finalizacion" : "proceso";
       const msg = await buildTemplate(key, { cliente: c.name, placa: b?.plate, moto: b?.model, orden: order.number, estado: status });
-      window.open(waLink(c.phone, msg), "_blank");
+      await sendOrOpenMessage(c.phone, msg);
     }
     toast.success(`Estado: ${STATUS_META[status].label}`);
   };
@@ -178,43 +161,24 @@ export default function Motos() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>Ingresar moto / Nueva orden</DialogTitle></DialogHeader>
-          <div className="flex gap-2">
-            <Button size="sm" variant={form.mode === "existing" ? "default" : "outline"} onClick={() => setForm({ ...form, mode: "existing" })}>Cliente existente</Button>
-            <Button size="sm" variant={form.mode === "new" ? "default" : "outline"} onClick={() => setForm({ ...form, mode: "new" })}>Nuevo cliente</Button>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Nombre del cliente</Label>
+              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Juan Pérez" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Teléfono</Label>
+              <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="3001234567" />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label>Placa del vehículo</Label>
+              <Input value={form.plate} onChange={(e) => setForm({ ...form, plate: e.target.value.toUpperCase() })} placeholder="ABC-123" />
+            </div>
           </div>
-          {form.mode === "existing" ? (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label>Cliente</Label>
-                <Select value={String(form.customerId)} onValueChange={(v) => setForm({ ...form, customerId: Number(v), bikeId: 0 })}>
-                  <SelectTrigger><SelectValue placeholder="Selecciona cliente" /></SelectTrigger>
-                  <SelectContent>
-                    {customers.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.name} · {c.phone}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label>Moto</Label>
-                <Select value={String(form.bikeId)} onValueChange={(v) => setForm({ ...form, bikeId: Number(v) })}>
-                  <SelectTrigger><SelectValue placeholder="Selecciona moto" /></SelectTrigger>
-                  <SelectContent>
-                    {bikes.filter((b) => b.customerId === form.customerId).map((b) => (
-                      <SelectItem key={b.id} value={String(b.id)}>{b.plate} · {b.model}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5"><Label>Nombre cliente</Label><Input value={form.newCustomerName} onChange={(e) => setForm({ ...form, newCustomerName: e.target.value })} /></div>
-              <div className="space-y-1.5"><Label>Teléfono</Label><Input value={form.newCustomerPhone} onChange={(e) => setForm({ ...form, newCustomerPhone: e.target.value })} /></div>
-              <div className="space-y-1.5"><Label>Placa</Label><Input value={form.newPlate} onChange={(e) => setForm({ ...form, newPlate: e.target.value })} /></div>
-              <div className="space-y-1.5"><Label>Tipo / Modelo</Label><Input value={form.newModel} onChange={(e) => setForm({ ...form, newModel: e.target.value })} /></div>
-            </div>
-          )}
-          <div className="space-y-1.5"><Label>Problema reportado</Label><Textarea rows={3} value={form.problem} onChange={(e) => setForm({ ...form, problem: e.target.value })} /></div>
-          <div className="space-y-1.5"><Label>Fecha estimada de entrega</Label><Input type="date" value={form.estimatedDate} onChange={(e) => setForm({ ...form, estimatedDate: e.target.value })} /></div>
+          <div className="space-y-1.5">
+            <Label>Reparación que necesita</Label>
+            <Textarea rows={3} value={form.problem} onChange={(e) => setForm({ ...form, problem: e.target.value })} placeholder="Describe la falla o reparación solicitada..." />
+          </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)}>Cancelar</Button>
             <Button onClick={createOrder}>Crear orden</Button>

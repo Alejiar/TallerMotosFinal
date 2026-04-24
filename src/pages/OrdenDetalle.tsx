@@ -2,7 +2,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { db, OrderStatus, STATUS_META, OrderItem, OrderService, formatSaleNumber, nextCounter } from "@/lib/db";
 import { dateShort, money, todayISO } from "@/lib/format";
-import { buildTemplate, waLink } from "@/lib/whatsapp";
+import { buildTemplate, waLink, sendOrOpenMessage } from "@/lib/whatsapp";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,7 +21,7 @@ export default function OrdenDetalle() {
   const order = useLiveQuery(() => db.orders.get(orderId), [orderId]);
   const customer = useLiveQuery(() => (order ? db.customers.get(order.customerId) : undefined), [order?.customerId]);
   const bike = useLiveQuery(() => (order ? db.bikes.get(order.bikeId) : undefined), [order?.bikeId]);
-  const products = useLiveQuery(() => db.products.where("active").equals(1 as any).toArray().catch(() => db.products.toArray()), []) ?? [];
+  const products = useLiveQuery(() => db.products.toArray(), []) ?? [];
   const [partQuery, setPartQuery] = useState("");
   const [serviceForm, setServiceForm] = useState({ description: "", price: 0 });
   const fileRef = useRef<HTMLInputElement>(null);
@@ -77,7 +77,7 @@ export default function OrdenDetalle() {
     if (customer) {
       const key = status === "lista" ? "finalizacion" : "proceso";
       const msg = await buildTemplate(key, { cliente: customer.name, placa: bike?.plate, moto: bike?.model, orden: order.number, estado: status });
-      window.open(waLink(customer.phone, msg), "_blank");
+      await sendOrOpenMessage(customer.phone, msg);
     }
     toast.success("Estado actualizado");
   };
@@ -118,14 +118,15 @@ export default function OrdenDetalle() {
     await update({ locked: true, status: "entregada", total });
     if (customer) {
       const msg = await buildTemplate("finalizacion", { cliente: customer.name, placa: bike?.plate, moto: bike?.model, orden: order.number });
-      window.open(waLink(customer.phone, msg), "_blank");
+      await sendOrOpenMessage(customer.phone, msg);
     }
     toast.success(`Orden finalizada. Factura ${number}`);
   };
 
-  const filteredProducts = products.filter((p) =>
-    p.active && (p.name.toLowerCase().includes(partQuery.toLowerCase()) || p.code.includes(partQuery))
-  ).slice(0, 8);
+  const filteredProducts = products.filter((p) => {
+    const t = partQuery.toLowerCase();
+    return p.name.toLowerCase().includes(t) || p.code.toLowerCase().includes(t) || (p.shelf ?? "").toLowerCase().includes(t);
+  }).slice(0, 20);
 
   return (
     <div className="space-y-5">

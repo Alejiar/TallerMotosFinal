@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
+import { HashRouter, Route, Routes, Navigate } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -23,6 +23,7 @@ import Caja from "@/pages/Caja";
 import Notas from "@/pages/Notas";
 import Garantias from "@/pages/Garantias";
 import Mensajes from "@/pages/Mensajes";
+import WhatsApp from "@/pages/WhatsApp";
 import Buscar from "@/pages/Buscar";
 import NotFound from "./pages/NotFound";
 
@@ -48,6 +49,7 @@ function Protected() {
         <Route path="/caja" element={<Caja />} />
         <Route path="/notas" element={<Notas />} />
         <Route path="/garantias" element={<Garantias />} />
+        <Route path="/whatsapp" element={<WhatsApp />} />
         <Route path="/mensajes" element={<Mensajes />} />
         <Route path="/buscar" element={<Buscar />} />
         <Route path="*" element={<NotFound />} />
@@ -65,11 +67,11 @@ const App = () => {
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        <BrowserRouter>
+        <HashRouter>
           <AuthProvider>
             <Protected />
           </AuthProvider>
-        </BrowserRouter>
+        </HashRouter>
       </TooltipProvider>
     </QueryClientProvider>
   );

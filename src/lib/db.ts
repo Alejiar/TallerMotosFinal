@@ -1,4 +1,5 @@
 import Dexie, { Table } from "dexie";
+import { backendGet } from "@/lib/backend";
 
 export type Role = "admin" | "empleado";
 
@@ -222,7 +223,55 @@ export function formatSaleNumber(n: number) {
   return String(n).padStart(5, "0");
 }
 
+async function loadBackendData(): Promise<boolean> {
+  try {
+    const payload = await backendGet("/sync/all");
+    if (!payload || typeof payload !== "object") return false;
+
+    const count = await db.users.count();
+    if (count !== 0) return true;
+
+    await db.transaction(
+      "rw",
+      db.users,
+      db.customers,
+      db.bikes,
+      db.orders,
+      db.products,
+      db.sales,
+      db.suppliers,
+      db.employees,
+      db.employeePayments,
+      db.cash,
+      db.notes,
+      db.templates,
+      db.counters,
+      async () => {
+        if (Array.isArray(payload.usuarios)) await db.users.bulkPut(payload.usuarios);
+        if (Array.isArray(payload.clientes)) await db.customers.bulkPut(payload.clientes);
+        if (Array.isArray(payload.motos)) await db.bikes.bulkPut(payload.motos);
+        if (Array.isArray(payload.ordenes)) await db.orders.bulkPut(payload.ordenes);
+        if (Array.isArray(payload.productos)) await db.products.bulkPut(payload.productos);
+        if (Array.isArray(payload.ventas)) await db.sales.bulkPut(payload.ventas);
+        if (Array.isArray(payload.proveedores)) await db.suppliers.bulkPut(payload.proveedores);
+        if (Array.isArray(payload.empleados)) await db.employees.bulkPut(payload.empleados);
+        if (Array.isArray(payload.pagos_empleados)) await db.employeePayments.bulkPut(payload.pagos_empleados);
+        if (Array.isArray(payload.caja)) await db.cash.bulkPut(payload.caja);
+        if (Array.isArray(payload.notas)) await db.notes.bulkPut(payload.notas);
+        if (Array.isArray(payload.templates)) await db.templates.bulkPut(payload.templates);
+        if (Array.isArray(payload.counters)) await db.counters.bulkPut(payload.counters);
+      },
+    );
+    return true;
+  } catch (error) {
+    console.warn("Load backend data failed:", error);
+    return false;
+  }
+}
+
 export async function seed() {
+  const hasBackendData = await loadBackendData();
+
   const userCount = await db.users.count();
   if (userCount === 0) {
     await db.users.bulkAdd([
