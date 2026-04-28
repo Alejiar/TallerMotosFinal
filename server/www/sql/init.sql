@@ -197,7 +197,7 @@ CREATE INDEX IF NOT EXISTS idx_wa_mensajes_estado ON whatsapp_mensajes(estado);
 
 -- Seeds
 INSERT OR IGNORE INTO usuarios(id,username,password,name,role,active)
-VALUES(1,'admin','$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi','Administrador','admin',1);
+VALUES(1,'admin','admin','Administrador','admin',1);
 
 INSERT OR IGNORE INTO counters(key,value) VALUES('order',0),('sale',0);
 

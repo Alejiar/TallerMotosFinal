@@ -1,203 +1,137 @@
 /**
  * MotoFlow Pro - Adaptador API (Compatibilidad)
- * Convierte llamadas antiguas a la nueva API PHP
- * Esto debe incluirse ANTES que script.js
+ * Convierte llamadas antiguas script.js al backend Node.js/Express
  */
 
-// Variables globales
-let appData = {};
 let cachedResources = {};
 
-// Función que reemplaza a 'api' antiguo
+// ─── api() ────────────────────────────────────────────────────────────────────
+// Reemplaza la función global api() de script.js.
+// auth/login y auth/logout se manejan localmente; todo lo demás se proxea al servidor.
 async function api(archivo, accion, datos = {}) {
   try {
-    // Mapear llamadas antiguas a nuevos endpoints
     if (archivo === 'auth' && accion === 'login') {
-      return await Auth.login(datos.username, datos.password);
+      // Login contra el servidor Node.js
+      const r = await fetch('/php/auth?action=login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'login', username: datos.username, password: datos.password }),
+      });
+      const res = await r.json();
+      if (res.ok) {
+        const user = { id: res.uid, nombre: res.nombre, rol: res.rol, name: res.nombre, role: res.rol, username: datos.username };
+        Auth.currentUser = user;
+        localStorage.setItem('motoflow_user', JSON.stringify(user));
+        await syncAllData();
+      }
+      return res;
     }
-    
-    if (archivo === 'dashboard') {
-      return await loadDashboardData();
+
+    if (archivo === 'auth' && accion === 'logout') {
+      Auth.currentUser = null;
+      localStorage.removeItem('motoflow_user');
+      return { ok: true };
     }
-    
-    // Llamadas genéricas de recurso
-    if (accion === 'create') {
-      return await API.create(archivo, datos);
-    }
-    if (accion === 'update') {
-      return await API.update(archivo, datos.id, datos);
-    }
-    if (accion === 'delete') {
-      return await API.delete(archivo, datos.id);
-    }
-    
-    throw new Error('Acción no soportada');
+
+    // Proxy al servidor /php/:resource
+    const r = await fetch(`/php/${archivo}?action=${accion}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: accion, ...datos }),
+    });
+    return r.json();
   } catch (error) {
-    console.error('[API Adapter]', error);
+    console.error('[API Adapter]', archivo, accion, error);
     return { error: error.message };
   }
 }
 
-// Función que reemplaza a 'get' antiguo
+// ─── get() ────────────────────────────────────────────────────────────────────
+// Reemplaza la función global get() de script.js.
 async function get(archivo, accion, params = '') {
   try {
+    // Estado de sesión desde localStorage (script.js lo llama en DOMContentLoaded)
+    if (archivo === 'auth') {
+      const stored = localStorage.getItem('motoflow_user');
+      if (stored) {
+        const u = JSON.parse(stored);
+        return { uid: u.id, nombre: u.nombre || u.name, rol: u.rol || u.role };
+      }
+      return { uid: null };
+    }
+
+    // Dashboard directo al servidor
     if (archivo === 'dashboard') {
-      return await loadDashboardData();
+      return await fetch('/php/dashboard').then(r => r.json());
     }
-    
-    // GET genérico de recursos
-    if (accion === '') {
-      return await API.getAll(archivo);
+
+    // GET genérico — listar recursos
+    if (accion === '' || accion === 'listar') {
+      const r = await fetch(`/php/${archivo}?action=listar`);
+      return r.json();
     }
-    
-    throw new Error('Acción no soportada');
+
+    // Fallback: proxear al servidor
+    const r = await fetch(`/php/${archivo}?action=${accion}${params}`);
+    return r.json();
   } catch (error) {
-    console.error('[GET Adapter]', error);
+    console.error('[GET Adapter]', archivo, accion, error);
     return { error: error.message };
   }
 }
 
-// Funciones de datos agregados
-async function loadDashboardData() {
-  try {
-    const { ordenes, productos, caja } = cachedResources;
-    
-    // Contar órdenes por estado
-    const pendientes = (ordenes || []).filter(o => o.status === 'pending').length;
-    const en_proceso = (ordenes || []).filter(o => o.status === 'in_progress').length;
-    const listas = (ordenes || []).filter(o => o.status === 'ready').length;
-    
-    // Stock bajo
-    const stock_bajo = (productos || []).filter(p => p.stock < p.minStock).slice(0, 5);
-    
-    // Órdenes recientes
-    const ordenes_recientes = (ordenes || []).slice(-5).reverse();
-    
-    // Caja
-    const cajaMovimientos = (caja || []);
-    const ingresos = cajaMovimientos
-      .filter(m => m.type === 'income')
-      .reduce((sum, m) => sum + (m.amount || 0), 0);
-    const egresos = cajaMovimientos
-      .filter(m => m.type === 'expense')
-      .reduce((sum, m) => sum + (m.amount || 0), 0);
-    
-    return {
-      ordenes: { pendientes, en_proceso, listas },
-      stock_bajo,
-      ordenes_recientes,
-      caja: { balance: ingresos - egresos, ingresos, egresos }
-    };
-  } catch (error) {
-    console.error('[loadDashboardData]', error);
-    return { error: error.message };
-  }
-}
-
-// Sincronizar datos en inicio
+// ─── syncAllData() ───────────────────────────────────────────────────────────
 async function syncAllData() {
   try {
-    console.log('[Adapter] Sincronizando datos...');
-    const data = await API.sync();
-    
-    // Guardar en cache
+    const data = await fetch('/api/sync').then(r => r.json());
     cachedResources = data;
-    Storage.cacheAll(data);
-    
-    // Mapear alias para compatibilidad
-    const mapping = {
-      clientes: 'clientes',
-      motos: 'motos',
-      ordenes: 'ordenes',
-      productos: 'productos',
-      proveedores: 'proveedores',
-      empleados: 'empleados',
-      compras: 'compras',
-      ventas: 'ventas',
-      notas: 'notas',
-      caja: 'caja',
-    };
-    
-    for (const [key, resource] of Object.entries(mapping)) {
-      if (data[resource]) {
-        window[key + 'Data'] = data[resource];
-      }
+    if (typeof Storage !== 'undefined' && Storage.cacheAll) Storage.cacheAll(data);
+    // Exponer en window para compatibilidad con script.js
+    const keys = ['clientes','motos','ordenes','productos','proveedores','empleados','compras','ventas','notas','caja'];
+    for (const k of keys) {
+      if (data[k]) window[k + 'Data'] = data[k];
     }
-    
-    console.log('[Adapter] Datos sincronizados');
     return data;
-  } catch (error) {
-    console.error('[syncAllData]', error);
+  } catch (e) {
+    console.error('[syncAllData]', e);
     return {};
   }
 }
 
-// Reemplazar Auth.login en script.js para que use el nuevo
-Auth.login = async function(username, password) {
-  try {
-    const usuarios = await API.getAll('usuarios');
-    const user = usuarios.find(u => u.username === username);
-
-    if (!user) {
-      throw new Error('Usuario no encontrado');
-    }
-
-    if (user.password !== password) {
-      throw new Error('Contraseña incorrecta');
-    }
-
-    if (!user.active) {
-      throw new Error('Usuario inactivo');
-    }
-
-    this.currentUser = {
-      id: user.id,
-      username: user.username,
-      nombre: user.name,
-      nombre_completo: user.name,
-      rol: user.role,
-      role: user.role,
-      name: user.name,
-    };
-
-    localStorage.setItem('motoflow_user', JSON.stringify(this.currentUser));
-    
-    // Sincronizar datos
-    await syncAllData();
-    
-    return this.currentUser;
-  } catch (error) {
-    throw error;
-  }
+// ─── Router.init() override ──────────────────────────────────────────────────
+// Router.navigate() de router.js no tiene rutas registradas; lo redirigimos a
+// showPage() de script.js que sí sabe renderizar cada sección.
+Router.init = function () {
+  document.querySelectorAll('a[data-page]').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (typeof showPage === 'function') showPage(link.dataset.page);
+    });
+  });
+  if (typeof showPage === 'function') showPage('dashboard');
 };
 
-// Hook para inicio de app
-const originalInit = window.addEventListener ? window.addEventListener.bind(window) : null;
-
+// ─── Sesión persistente ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-  // Restaurar sesión
   const stored = localStorage.getItem('motoflow_user');
-  if (stored) {
-    try {
-      Auth.currentUser = JSON.parse(stored);
-      await syncAllData();
-      
-      // Mostrar app (simulación de doLogin éxito)
-      const loginScreen = document.getElementById('login-screen');
-      const appEl = document.getElementById('app');
-      if (loginScreen && appEl) {
-        loginScreen.classList.add('hidden');
-        appEl.classList.remove('hidden');
-        const topbarUser = document.getElementById('topbar-user');
-        if (topbarUser) {
-          topbarUser.textContent = `👤 ${Auth.currentUser.nombre} (${Auth.currentUser.rol})`;
-        }
-      }
-    } catch (error) {
-      console.error('[DOMContentLoaded]', error);
-      localStorage.removeItem('motoflow_user');
+  if (!stored) return;
+
+  try {
+    Auth.currentUser = JSON.parse(stored);
+    const loginScreen = document.getElementById('login-screen');
+    const appEl = document.getElementById('app');
+    if (loginScreen) loginScreen.classList.add('hidden');
+    if (appEl) appEl.classList.remove('hidden');
+    const topbarUser = document.getElementById('topbar-user');
+    if (topbarUser) {
+      topbarUser.textContent = `👤 ${Auth.currentUser.nombre || Auth.currentUser.name} (${Auth.currentUser.rol || Auth.currentUser.role})`;
     }
+    await syncAllData();
+    if (typeof showPage === 'function') showPage('dashboard');
+  } catch (e) {
+    console.error('[Adapter DOMContentLoaded]', e);
+    localStorage.removeItem('motoflow_user');
   }
 });
 
-console.log('[Adapter] Cargado - Compatibilidad API antigua');
+console.log('[Adapter] Cargado');

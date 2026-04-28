@@ -901,19 +901,20 @@ function updateWAPage(d) {
   const btnDisconnect = document.getElementById('wa-btn-disconnect');
   if (!dot) return;
 
-  const labels = { disconnected: 'Desconectado', loading: 'Iniciando...', qr: 'Escanea el código QR', connected: 'Conectado ✓' };
+  const labels = { disconnected: 'Conectando...', loading: 'Iniciando...', qr: 'Escanea el código QR', connected: 'Conectado ✓' };
   dot.className = `wa-status-dot ${d.state}`;
   text.textContent = labels[d.state] || d.state;
 
   qrWrap.classList.toggle('hidden', d.state !== 'qr' || !d.qr);
-  spinner.classList.toggle('hidden', d.state !== 'loading');
+  spinner.classList.toggle('hidden', d.state === 'connected' || (d.state === 'qr' && d.qr));
   if (d.state === 'qr' && d.qr) document.getElementById('wa-qr').src = d.qr;
 
   errEl.textContent = d.error || '';
   errEl.classList.toggle('hidden', !d.error);
 
-  btnConnect.classList.toggle('hidden', d.state !== 'disconnected');
-  btnDisconnect.classList.toggle('hidden', d.state === 'disconnected' || d.state === 'loading');
+  // Sin botones: el backend gestiona conexión automáticamente
+  if (btnConnect) btnConnect.classList.add('hidden');
+  if (btnDisconnect) btnDisconnect.classList.add('hidden');
 }
 
 async function waConnect() {

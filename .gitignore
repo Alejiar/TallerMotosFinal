@@ -13,6 +13,18 @@ dist-ssr
 dist_electron
 *.local
 
+# Datos de runtime y sesiones (no van al repo)
+backend/uploads/*
+!backend/uploads/.gitkeep
+wa_auth/
+wa.log
+*.db
+*.db-journal
+php_test.log
+
+# Carpeta de pruebas obsoleta
+whatsapp-backend/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

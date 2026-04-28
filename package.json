@@ -7,12 +7,13 @@
   "type": "commonjs",
   "main": "electron/main.cjs",
   "scripts": {
-    "dev": "concurrently \"node backend/whatsapp-server.mjs\" \"electron .\"",
-    "build:exe": "electron-builder --dir",
-    "start": "electron ."
+    "dev": "electron .",
+    "start": "electron .",
+    "build:exe": "electron-builder --dir"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "@whiskeysockets/baileys": "^6.17.16",
+    "axios": "^1.15.2",
     "concurrently": "^8.2.2",
     "cors": "^2.8.5",
     "express": "^4.18.4",
@@ -57,6 +58,7 @@
       "dist/**",
       "electron/**",
       "backend/**",
+      "server/**",
       "package.json"
     ],
     "extraResources": [
@@ -67,7 +69,7 @@
     ],
     "win": {
       "target": [
-        "dir"
+        "nsis"
       ],
       "icon": "public/favicon.ico"
     }

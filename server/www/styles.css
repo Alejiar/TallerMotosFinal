@@ -22,6 +22,7 @@
 }
 
 body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; font-size: 14px; }
+#app { display: flex; flex: 1; height: 100vh; min-width: 0; }
 
 /* ─── Sidebar ─── */
 #sidebar { width: 220px; min-width: 220px; background: var(--sidebar-bg); display: flex; flex-direction: column; height: 100vh; }

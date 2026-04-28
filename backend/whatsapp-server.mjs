@@ -15,13 +15,16 @@ app.use(cors());
 app.use(express.json());
 
 // GET estado
-app.get('/api/whatsapp/status', (req, res) => {
-  const status = waGetStatus();
-  res.json(status);
-});
+const handleStatus = (req, res) => {
+  const s = waGetStatus();
+  // Mantener compatibilidad: el frontend espera "state"
+  res.json({ state: s.status, qr: s.qr, status: s.status });
+};
+app.get('/api/whatsapp/status', handleStatus);
+app.get('/api/status', handleStatus);
 
 // POST inicializar
-app.post('/api/whatsapp/init', async (req, res) => {
+const handleInit = async (req, res) => {
   try {
     console.log('[WA API] POST /init');
     await initWhatsApp();
@@ -30,10 +33,12 @@ app.post('/api/whatsapp/init', async (req, res) => {
     console.error('[WA API] Error:', e.message);
     res.status(500).json({ error: e.message });
   }
-});
+};
+app.post('/api/whatsapp/init', handleInit);
+app.post('/api/init', handleInit);
 
 // POST enviar mensaje
-app.post('/api/whatsapp/send', async (req, res) => {
+const handleSend = async (req, res) => {
   const { phone, message } = req.body;
   try {
     if (!phone || !message) {
@@ -46,10 +51,12 @@ app.post('/api/whatsapp/send', async (req, res) => {
     console.error('[WA API] Error:', e.message);
     res.status(400).json({ error: e.message });
   }
-});
+};
+app.post('/api/whatsapp/send', handleSend);
+app.post('/api/send', handleSend);
 
 // POST desconectar
-app.post('/api/whatsapp/disconnect', async (req, res) => {
+const handleDisconnect = async (req, res) => {
   try {
     console.log('[WA API] POST /disconnect');
     await waDisconnect();
@@ -58,7 +65,9 @@ app.post('/api/whatsapp/disconnect', async (req, res) => {
     console.error('[WA API] Error:', e.message);
     res.status(500).json({ error: e.message });
   }
-});
+};
+app.post('/api/whatsapp/disconnect', handleDisconnect);
+app.post('/api/disconnect', handleDisconnect);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -69,6 +78,10 @@ export async function startWAServer(port = PORT) {
   return new Promise((resolve, reject) => {
     const server = app.listen(port, () => {
       console.log(`[WA Server] Iniciado en http://0.0.0.0:${port}`);
+      // Auto-iniciar WhatsApp al arrancar el servicio.
+      // El reintento de reconexión vive dentro del close handler de whatsapp-service.mjs
+      // para evitar carreras de dos sockets simultáneos.
+      initWhatsApp().catch(e => console.error('[WA Server] Auto-init falló:', e.message));
       resolve(server);
     });
     server.on('error', (error) => {

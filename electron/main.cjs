@@ -1,55 +1,17 @@
 const { app, BrowserWindow } = require("electron");
 const path = require("path");
-const { spawn } = require("child_process");
 const { pathToFileURL } = require("url");
 
-const PHP_EXE = path.join(__dirname, "../server/php/php.exe");
-const PHP_ROOT = path.join(__dirname, "../server/www");
-const PHP_PORT = 8000;
+const APP_PORT = 8000;
 const WA_PORT = 8001;
 
-let phpProcess = null;
+let dbServer = null;
 let waServer = null;
 
-async function startPHP() {
-  return new Promise((resolve) => {
-    const routerFile = path.join(PHP_ROOT, "router.php");
-    phpProcess = spawn(PHP_EXE, ["-S", `0.0.0.0:${PHP_PORT}`, "-t", PHP_ROOT, routerFile], {
-      cwd: PHP_ROOT,
-      windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    let isReady = false;
-
-    phpProcess.stderr.on("data", (d) => {
-      const msg = d.toString();
-      console.log("[PHP]", msg.trim());
-      if (!isReady && (msg.includes("Development Server") || msg.includes("listening"))) {
-        isReady = true;
-        console.log("[PHP] ✓ Servidor iniciado en puerto", PHP_PORT);
-        resolve();
-      }
-    });
-
-    phpProcess.stdout.on("data", (d) => {
-      const msg = d.toString();
-      if (msg.trim()) console.log("[PHP]", msg.trim());
-    });
-
-    phpProcess.on("error", (e) => {
-      console.error("[PHP] Error:", e.message);
-      resolve();
-    });
-
-    // Resolver después de 2s si no se detecta startup message
-    setTimeout(() => {
-      if (!isReady) {
-        isReady = true;
-        resolve();
-      }
-    }, 2000);
-  });
+async function startDBServer() {
+  const mod = await import(pathToFileURL(path.join(__dirname, "../backend/db-server.mjs")).href);
+  dbServer = await mod.startDBServer(APP_PORT);
+  console.log("[DB] ✓ Servidor iniciado en puerto", APP_PORT);
 }
 
 async function startWAService() {
@@ -77,25 +39,25 @@ function createWindow() {
     },
   });
 
-  win.loadURL(`http://localhost:${PHP_PORT}`);
+  win.loadURL(`http://127.0.0.1:${APP_PORT}`);
   win.once("ready-to-show", () => win.show());
 
   win.webContents.on("did-fail-load", (_e, code, desc, url) => {
     console.error(`[Electron] Fallo al cargar ${url}: ${desc} (${code})`);
-    setTimeout(() => win.loadURL(`http://localhost:${PHP_PORT}`), 1000);
+    setTimeout(() => win.loadURL(`http://127.0.0.1:${APP_PORT}`), 1000);
   });
 
   win.on("closed", () => { cleanup(); app.quit(); });
 }
 
 function cleanup() {
-  if (phpProcess) { phpProcess.kill(); phpProcess = null; }
+  if (dbServer) { dbServer.close(); dbServer = null; }
   if (waServer) { waServer.close(); waServer = null; }
 }
 
 app.whenReady().then(async () => {
   console.log("[Electron] Iniciando MotoFlow Pro...");
-  await startPHP();
+  await startDBServer();
   await startWAService();
   createWindow();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
