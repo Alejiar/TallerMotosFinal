@@ -1,121 +1,85 @@
-# 🚀 Quick Start - MotoFlow Pro Migración Completada
+# Quick Start - MotoFlow Pro
 
-## En 3 pasos: Usar MotoFlow Pro
+App Electron de gestión de taller de motos. Backend Express + sql.js, integración WhatsApp con Baileys.
 
-### 1️⃣ Iniciar PHP Server
-```bash
-cd c:\motoflow-pro\server\www
-php -S 0.0.0.0:8000 router.php
-```
-✅ Resultado esperado: 
-```
-[Thu Apr 24 12:00:00 2026] Development Server (http://0.0.0.0:8000) started
-```
+## Requisitos
 
-### 2️⃣ Iniciar WhatsApp Service (en otra terminal)
-```bash
-cd c:\motoflow-pro
-node backend/whatsapp-server.mjs
-```
-✅ Resultado esperado:
-```
-[WA Server] Iniciado en http://0.0.0.0:8001
-```
+- Node.js >= 18.18 (LTS recomendado)
+- Windows / macOS / Linux
 
-### 3️⃣ Acceder a la Aplicación
-- Abrir navegador: **http://localhost:8000**
-- Login:
-  - Usuario: `admin`
-  - Contraseña: `admin123`
-
----
-
-## 🎯 Usar con Electron (Opcional)
-
-Si quieres que arranque todo automáticamente:
+## Instalación
 
 ```bash
-npm run dev
+git clone <repo-url> motoflow-pro
+cd motoflow-pro
+npm install
+npm start
 ```
 
-La aplicación abrirá sola con la ventana Electron.
+La ventana de Electron abre sola. Backend (puerto 8000) y servicio WhatsApp (puerto 8001) arrancan automáticamente.
 
----
+## Login por defecto
 
-## 🛠️ Troubleshooting Rápido
+- Usuario: `admin`
+- Contraseña: `admin`
+
+Si olvidaste la contraseña, restablécela con:
+
+```bash
+npm run reset-admin
+```
+
+## Datos de la aplicación
+
+Por defecto cada copia clonada del proyecto guarda sus datos en `./data/`:
+
+- `data/taller.db` — base de datos SQLite
+- `data/wa_auth/` — sesión de WhatsApp
+- `data/wa.log` — log de WhatsApp
+- `data/electron-userdata/` — caché y cookies de Electron
+
+La carpeta `data/` está en `.gitignore` y nunca se sube al repo.
+
+## Aislar dos copias en el mismo PC
+
+Cada carpeta clonada ya tiene su `data/` propio. Si además quieres correr **las dos a la vez**, asigna puertos distintos a la segunda copia:
+
+```bash
+# Terminal 1 (copia A) — usa puertos por defecto 8000/8001
+cd C:\TallerMotosFinal
+npm start
+
+# Terminal 2 (copia B)
+cd C:\TallerMotosFinal2
+set MOTOFLOW_DB_PORT=8010
+set MOTOFLOW_WA_PORT=8011
+npm start
+```
+
+Variables disponibles:
+
+| Variable | Default | Uso |
+|---|---|---|
+| `MOTOFLOW_DATA_DIR` | `<repo>/data` | Carpeta donde se guarda DB, sesión WA, logs |
+| `MOTOFLOW_DB_PORT` | `8000` | Puerto del servidor backend |
+| `MOTOFLOW_WA_PORT` | `8001` | Puerto del servicio WhatsApp |
+| `MOTOFLOW_RESET_ADMIN` | (no set) | Si vale `1`, restablece admin/admin al arrancar |
+
+Si el puerto está ocupado al arrancar, la app prueba automáticamente `puerto+1`, `+2`, … hasta encontrar uno libre.
+
+## Empaquetar instalador (.exe)
+
+```bash
+npm run build:exe
+```
+
+Salida en `dist_electron/`.
+
+## Solución de problemas
 
 | Problema | Solución |
-|----------|----------|
-| "No se conecta a BD" | `cd server\www && php migrate.php` |
-| "Puerto 8000 en uso" | `netstat -an \| find ":8000"` - matar proceso |
-| "Puerto 8001 en uso" | `netstat -an \| find ":8001"` - matar proceso |
-| "Datos vacíos" | `curl http://localhost:8000/api/sync.php` - verificar JSON |
-| "Login no funciona" | Verificar que `%APPDATA%\MotoFlowPro\taller.db` existe |
-
----
-
-## 📝 Archivos Importantes
-
-```
-✅ API.md                    → Documentación de endpoints
-✅ MIGRACION_COMPLETADA.md   → Guía completa
-✅ TESTING_CHECKLIST.md      → Puntos a verificar  
-✅ CAMBIOS_FASE1.md          → Qué se cambió
-✅ server/www/API.md         → Referencia técnica
-```
-
----
-
-## 💡 Cheat Sheet
-
-```javascript
-// En consola del navegador (después de login)
-
-// Ver datos en cache
-Storage.getCachedResource('clientes')
-
-// Crear cliente
-await API.create('clientes', {
-  name: 'Nuevo Cliente',
-  phone: '555555555',
-  createdAt: new Date().toISOString()
-})
-
-// Obtener uno
-await API.getOne('clientes', 1)
-
-// Actualizar
-await API.update('clientes', 1, { phone: '666666666' })
-
-// Eliminar
-await API.delete('clientes', 1)
-
-// Ver status de WhatsApp
-await API.fetch('/whatsapp.php?action=status')
-```
-
----
-
-## 📊 Verificación Rápida
-
-```bash
-# 1. BD existe
-ls "%APPDATA%\MotoFlowPro\taller.db"
-
-# 2. Tablas creadas
-sqlite3 "%APPDATA%\MotoFlowPro\taller.db" ".tables"
-
-# 3. API responde
-curl http://localhost:8000/api/sync.php
-
-# 4. Frontend carga
-curl http://localhost:8000
-```
-
----
-
-## ✨ ¡Listo!
-
-La migración está completada. Solo ejecuta los servidores y comienza a usar MotoFlow Pro con la nueva arquitectura PHP + SQLite.
-
-**Próximo:** Leer [TESTING_CHECKLIST.md](TESTING_CHECKLIST.md) para testing completo.
+|---|---|
+| Login `admin/admin` no entra | `npm run reset-admin` |
+| WhatsApp en bucle de QR | Tras 3 QR caducados se detiene; pulsa "Conectar" en la UI o reinicia con `npm start` |
+| "Puerto en uso" | La app retrocede a `puerto+N`; o exporta `MOTOFLOW_DB_PORT` / `MOTOFLOW_WA_PORT` |
+| Reset total | Borra la carpeta `data/` y vuelve a iniciar |

@@ -85,7 +85,7 @@ export async function startWAServer(port = PORT) {
       resolve(server);
     });
     server.on('error', (error) => {
-      console.error('[WA Server] Error:', error.message);
+      if (error.code !== 'EADDRINUSE') console.error('[WA Server] Error:', error.message);
       reject(error);
     });
   });

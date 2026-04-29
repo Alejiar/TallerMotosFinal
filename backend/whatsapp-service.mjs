@@ -3,7 +3,9 @@ import path from "path";
 import os from "os";
 import fs from "fs";
 
-const LOG_PATH = path.join(process.env.APPDATA || os.homedir(), "MotoFlowPro", "wa.log");
+const DATA_DIR = process.env.MOTOFLOW_DATA_DIR
+  || path.join(process.env.APPDATA || os.homedir(), "MotoFlowPro");
+const LOG_PATH = path.join(DATA_DIR, "wa.log");
 function logLine(msg) {
   try {
     fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
@@ -12,9 +14,8 @@ function logLine(msg) {
   console.log(msg);
 }
 
-const SESSION_PATH = process.env.APPDATA
-  ? path.join(process.env.APPDATA, "MotoFlowPro", "wa_auth")
-  : path.join(os.homedir(), ".motoflowpro", "wa_auth");
+const SESSION_PATH = path.join(DATA_DIR, "wa_auth");
+const MAX_QR_FAILURES = 3;
 
 const logger = {
   level: "silent",
@@ -30,6 +31,9 @@ let shouldReconnect = false;
 let reconnectTimer = null;
 let connectGen = 0;       // identifica al socket activo; descartamos eventos de generaciones viejas
 let connectInFlight = false;
+let qrFailureCount = 0;   // QRs caducados consecutivos (408)
+let connectionReadyAt = 0; // timestamp en ms cuando la conexión quedó lista para enviar
+const sentMessageStore = new Map(); // jid|id → contenido (para retry de Baileys)
 
 function scheduleReconnect(delayMs) {
   if (reconnectTimer) return; // ya hay uno programado
@@ -133,12 +137,20 @@ async function connect() {
       version,
       auth: state,
       logger,
-      browser: ["Chrome (Linux)", "", ""],
-      markOnlineOnConnect: false,
+      browser: ["MotoFlow Pro", "Chrome", "120"],
+      // markOnlineOnConnect:true es clave para que WhatsApp acepte mensajes
+      // del cliente sin marcarlos como "esperando mensaje" en el receptor.
+      markOnlineOnConnect: true,
       syncFullHistory: false,
       generateHighQualityLinkPreview: false,
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
+      // Baileys pide reenviar el mensaje original cuando el receptor falla a descifrar.
+      // Sin este callback, los mensajes quedan en "esperando mensaje" para siempre.
+      getMessage: async (key) => {
+        const cacheKey = `${key.remoteJid}|${key.id}`;
+        return sentMessageStore.get(cacheKey) || { conversation: '' };
+      },
     });
 
     sock = mySock;
@@ -171,16 +183,20 @@ async function connect() {
       if (connection === "open") {
         waStatus = "connected";
         qrDataUrl = null;
+        qrFailureCount = 0;
+        connectionReadyAt = Date.now();
         logLine("[WA] ✓ Conectado");
+        // Marcar disponible para que las pre-keys se sincronicen y los receptores puedan descifrar.
+        try { mySock.sendPresenceUpdate?.('available'); } catch {}
       }
 
       if (connection === "close") {
         const isLoggedOut = code === 401 || code === 403;
+        const isQrTimeout = code === 408;
         logLine(`[WA gen=${myGen}] CLOSE code=${code} loggedOut=${isLoggedOut}`);
         // invalidar este socket
         connectGen++;
         sock = null;
-        waStatus = "disconnected";
         qrDataUrl = null;
 
         if (isLoggedOut) {
@@ -188,8 +204,25 @@ async function connect() {
             fs.rmSync(SESSION_PATH, { recursive: true, force: true });
             logLine("[WA] Sesión borrada por logout");
           } catch (e) { logLine("[WA] Error borrando sesión: " + e.message); }
+          shouldReconnect = false;
+          waStatus = "logged_out";
+          qrFailureCount = 0;
+          logLine("[WA] Reconexión deshabilitada tras logout. Llama initWhatsApp() para reintentar.");
+          return;
         }
 
+        if (isQrTimeout) {
+          qrFailureCount++;
+          logLine(`[WA] QR caducado (${qrFailureCount}/${MAX_QR_FAILURES})`);
+          if (qrFailureCount >= MAX_QR_FAILURES) {
+            shouldReconnect = false;
+            waStatus = "qr_timeout";
+            logLine("[WA] Demasiados QR caducados. Reconexión deshabilitada hasta initWhatsApp().");
+            return;
+          }
+        }
+
+        waStatus = "disconnected";
         if (shouldReconnect) {
           const delay = code === 515 ? 1000 : 3000;
           scheduleReconnect(delay);
@@ -210,6 +243,7 @@ export async function initWhatsApp() {
   if (waStatus === "connected" && sock) { logLine("[WA] Ya conectado"); return; }
   if (connectInFlight) { logLine("[WA] init: connect en curso"); return; }
   shouldReconnect = true;
+  qrFailureCount = 0;
   await connect();
 }
 
@@ -219,8 +253,46 @@ export function getStatus() {
 
 export async function sendMessage(phone, message) {
   if (waStatus !== "connected" || !sock) throw new Error("WhatsApp no está conectado");
-  const number = phone.replace(/\D/g, "");
-  await sock.sendMessage(`${number}@s.whatsapp.net`, { text: message });
+  const number = String(phone || "").replace(/\D/g, "");
+  if (!number) throw new Error("Teléfono inválido");
+
+  // Espera mínima de 2.5s tras "Conectado" para que las pre-keys queden disponibles
+  // del lado del receptor. Sin esto el primer mensaje queda en "esperando mensaje".
+  const waitMs = Math.max(0, 2500 - (Date.now() - connectionReadyAt));
+  if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs));
+
+  const jid = `${number}@s.whatsapp.net`;
+
+  // Verifica que el número exista en WhatsApp (evita enviar al vacío)
+  try {
+    const checked = await sock.onWhatsApp(jid);
+    if (Array.isArray(checked) && checked.length && checked[0].exists === false) {
+      throw new Error(`Número no registrado en WhatsApp: +${number}`);
+    }
+  } catch (e) {
+    if (e.message?.startsWith('Número no registrado')) throw e;
+    // ignora errores de verificación; intentamos enviar igual
+  }
+
+  // Suscribirse al estado del receptor ayuda a forzar el handshake de sesión
+  try { await sock.presenceSubscribe(jid); } catch {}
+  try { await sock.sendPresenceUpdate('composing', jid); } catch {}
+  await new Promise(r => setTimeout(r, 400));
+  try { await sock.sendPresenceUpdate('paused', jid); } catch {}
+
+  const result = await sock.sendMessage(jid, { text: message });
+
+  // Cachea el contenido para que getMessage pueda reenviarlo si el receptor pide retry.
+  if (result?.key?.id) {
+    const cacheKey = `${jid}|${result.key.id}`;
+    sentMessageStore.set(cacheKey, { conversation: message });
+    // Limita el caché a las últimas 200 entradas
+    if (sentMessageStore.size > 200) {
+      const firstKey = sentMessageStore.keys().next().value;
+      sentMessageStore.delete(firstKey);
+    }
+  }
+  return result;
 }
 
 export async function disconnect() {

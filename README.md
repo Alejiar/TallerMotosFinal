@@ -20,7 +20,7 @@ Sistema de gestión para taller de motos con integración a WhatsApp (Baileys), 
 - **Windows / Linux / macOS** (probado en Windows 10/11)
 - Conexión a internet (para WhatsApp Web)
 
-> No requiere MongoDB. La base de datos es SQLite y se guarda en `%APPDATA%\MotoFlowPro\taller.db` (Windows) o `~/.motoflowpro/taller.db` (Linux/Mac).
+> No requiere MongoDB. La base de datos es SQLite y se guarda dentro del proyecto en `./data/taller.db` (cada copia clonada tiene su propio `data/`).
 
 ## Instalación (clonar y correr)
 
@@ -81,17 +81,29 @@ motoflow-pro/
 
 ## Datos de runtime (no se versionan)
 
-Se guardan fuera del repo, en la carpeta de usuario:
+Cada copia del repo guarda su estado en una carpeta `data/` dentro del proyecto (ya está en `.gitignore`):
 
-- **Windows:** `C:\Users\<usuario>\AppData\Roaming\MotoFlowPro\`
-- **Linux/Mac:** `~/.motoflowpro/`
+- `data/taller.db` — base de datos SQLite
+- `data/wa_auth/` — sesión de WhatsApp (creds y keys)
+- `data/wa.log` — log del servicio de WhatsApp
+- `data/electron-userdata/` — caché y cookies de Electron
 
-Incluye:
-- `taller.db` — base de datos SQLite
-- `wa_auth/` — sesión de WhatsApp (creds y keys)
-- `wa.log` — log del servicio de WhatsApp
+Para resetear todo (forzar nuevo QR, BD vacía), borra la carpeta `data/`.
 
-Para resetear todo (forzar nuevo QR, BD vacía), borra esa carpeta entera.
+### Aislar varias instalaciones en el mismo PC
+
+Cada carpeta clonada tiene su `data/` propio, así que dos instalaciones no se pisan los datos. Si necesitas correrlas **simultáneamente**, dale puertos distintos a la segunda:
+
+```bash
+# Copia B
+set MOTOFLOW_DB_PORT=8010
+set MOTOFLOW_WA_PORT=8011
+npm start
+```
+
+Variables de entorno: `MOTOFLOW_DATA_DIR`, `MOTOFLOW_DB_PORT`, `MOTOFLOW_WA_PORT`, `MOTOFLOW_RESET_ADMIN=1` (resetea contraseña de admin a `admin`). Si el puerto está ocupado, la app retrocede automáticamente a `puerto+1`, `+2`, …
+
+Single-instance lock: si arrancas la misma copia dos veces, la segunda se cierra y devuelve foco a la primera.
 
 ## Mensajes automáticos de WhatsApp
 
@@ -108,11 +120,14 @@ Los teléfonos se formatean automáticamente con prefijo `+57` (Colombia).
 
 **El QR no aparece o se queda en "Conectando...":**
 1. Verifica conexión a internet.
-2. Borra `%APPDATA%\MotoFlowPro\wa_auth\` y reinicia.
-3. Revisa `%APPDATA%\MotoFlowPro\wa.log`.
+2. Borra `data/wa_auth/` y reinicia.
+3. Revisa `data/wa.log`.
 
-**WhatsApp se desconecta tras un rato:**
-- Es normal si el teléfono pierde internet o WhatsApp cierra la sesión vinculada. La app reintenta automáticamente cada pocos segundos.
+**WhatsApp se quedó en "qr_timeout" o "logged_out":**
+- Tras 3 QR caducados o un logout, la app **deja de reconectar** para no consumir CPU/red. Pulsa "Conectar" en la pantalla de WhatsApp (eso invoca `initWhatsApp()` y vuelve a generar QR), o reinicia la app con `npm start`.
+
+**Login `admin/admin` no entra:**
+- Ejecuta `npm run reset-admin` (restablece la contraseña a `admin`).
 
 **Mensaje "Servicio WhatsApp no disponible":**
 - El servicio en puerto 8001 no arrancó. Cierra completamente la app (verifica Task Manager que no quede ningún proceso "MotoFlow Pro" o "Electron") y vuelve a abrir.

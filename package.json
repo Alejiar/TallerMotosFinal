@@ -9,7 +9,17 @@
   "scripts": {
     "dev": "electron .",
     "start": "electron .",
+    "reset-admin": "node -e \"process.env.MOTOFLOW_RESET_ADMIN='1';require('child_process').spawnSync(process.platform==='win32'?'npx.cmd':'npx',['electron','.'],{stdio:'inherit',env:process.env})\"",
     "build:exe": "electron-builder --dir"
+  },
+  "engines": {
+    "node": ">=18.18"
+  },
+  "overrides": {
+    "protobufjs": "^7.5.5",
+    "uuid": "^14.0.0",
+    "file-type": "^22.0.1",
+    "music-metadata": "^11.12.3"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.17.16",
@@ -31,19 +41,19 @@
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react-swc": "^3.11.0",
     "autoprefixer": "^10.4.21",
-    "electron": "^30.5.1",
-    "electron-builder": "^24.7.0",
+    "electron": "^40.9.2",
+    "electron-builder": "^26.8.1",
     "eslint": "^9.32.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^15.15.0",
-    "jsdom": "^20.0.3",
+    "jsdom": "^25.0.1",
     "lovable-tagger": "^1.1.13",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.38.0",
-    "vite": "^5.4.19",
+    "vite": "^6.4.2",
     "vitest": "^3.2.4"
   },
   "build": {

@@ -217,7 +217,7 @@
       <div class="pg" id="pg-garantias">
         <div class="pg-header"><div><h1>Garantías</h1></div><button class="btn btn-primary" onclick="openModalGarantia()">+ Nueva</button></div>
         <div class="card"><div class="table-wrap"><table>
-          <thead><tr><th>Cliente</th><th>Placa</th><th>Descripción</th><th>Vence</th><th>Estado</th><th>Acciones</th></tr></thead>
+          <thead><tr><th>Cliente</th><th>Placa</th><th>Orden</th><th>Descripción</th><th>Vence</th><th>Estado</th><th>Acciones</th></tr></thead>
           <tbody id="gar-tbody"></tbody>
         </table></div></div>
       </div>
@@ -413,7 +413,11 @@
     <button class="modal-close" onclick="closeModal('modal-garantia')">✕</button>
     <h2>Nueva garantía</h2>
     <input type="hidden" id="gar-id">
-    <div class="form-group"><label>Descripción</label><textarea id="gar-desc" rows="3"></textarea></div>
+    <div class="form-group">
+      <label>Moto entregada</label>
+      <select id="gar-orden"><option value="">-- Selecciona una moto entregada --</option></select>
+    </div>
+    <div class="form-group"><label>Descripción</label><textarea id="gar-desc" rows="3" placeholder="Detalle de la garantía"></textarea></div>
     <div class="form-group"><label>Fecha vencimiento</label><input id="gar-expires" type="date"></div>
     <div class="form-group"><label>Estado</label><select id="gar-status"><option value="activa">Activa</option><option value="reclamada">Reclamada</option><option value="vencida">Vencida</option></select></div>
     <div class="modal-footer">

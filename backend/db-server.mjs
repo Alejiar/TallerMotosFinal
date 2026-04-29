@@ -9,41 +9,134 @@ import { sendMessage as waSend, getStatus as waGetStatus } from './whatsapp-serv
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// ── Auto-notificaciones WhatsApp (Colombia +57) ───────────────────
-const COUNTRY_CODE = '57';
-const STATUS_MESSAGES = {
-  ingresada:           (n) => `Hola ${n}, su moto ha sido ingresada al taller.`,
-  esperando_repuestos: (n) => `Hola ${n}, su moto está en espera de repuestos.`,
-  reparacion:          (n) => `Hola ${n}, su moto está siendo reparada.`,
-  reparando:           (n) => `Hola ${n}, su moto está siendo reparada.`,
-  lista:               (n) => `Hola ${n}, su moto está lista para ser entregada.`,
+// ── Auto-notificaciones WhatsApp ──────────────────────────────────
+const STATUS_LABELS = {
+  ingresada: 'Ingresada',
+  diagnostico: 'En diagnóstico',
+  esperando_repuestos: 'Esperando repuestos',
+  reparacion: 'En reparación',
+  reparando: 'En reparación',
+  lista: 'Lista para entregar',
+  entregada: 'Entregada',
 };
-function formatPhoneCO(phone) {
+// Mapa de status → key de plantilla en tabla `templates`. La key coincide con el estado.
+const STATUS_TEMPLATE = {
+  ingresada: 'ingresada',
+  diagnostico: 'diagnostico',
+  esperando_repuestos: 'esperando_repuestos',
+  reparacion: 'reparacion',
+  reparando: 'reparacion',
+  lista: 'lista',
+  entregada: 'entregada',
+};
+function getCountryCode() {
+  try {
+    const r = query("SELECT valor FROM configuracion WHERE clave='prefijo_pais'")[0];
+    return (r?.valor || '57').replace(/\D/g, '') || '57';
+  } catch { return '57'; }
+}
+function formatPhone(phone) {
   let limpio = String(phone || '').replace(/\D/g, '');
   if (!limpio) return null;
-  if (!limpio.startsWith(COUNTRY_CODE)) limpio = COUNTRY_CODE + limpio;
+  const cc = getCountryCode();
+  if (!limpio.startsWith(cc)) limpio = cc + limpio;
   return limpio;
 }
-async function notifyOrden(ordenId, estado) {
+function renderTemplate(body, vars) {
+  return String(body || '').replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '');
+}
+async function notifyOrden(ordenId, estado, fromStatus = null) {
   try {
-    const builder = STATUS_MESSAGES[estado];
-    if (!builder) return;
-    const row = query('SELECT c.name, c.phone FROM ordenes o LEFT JOIN clientes c ON c.id=o.customerId WHERE o.id=?', [ordenId])[0];
+    if (fromStatus !== null) {
+      try {
+        exec("INSERT INTO historial_ordenes (orderId, fromStatus, toStatus, createdAt) VALUES (?,?,?,?)",
+          [ordenId, fromStatus, estado, new Date().toISOString()]);
+      } catch (e) { console.warn('[Historial] no se pudo registrar:', e.message); }
+    }
+
+    const tplKey = STATUS_TEMPLATE[estado];
+    if (!tplKey) return;
+    const row = query(
+      `SELECT o.number, c.name as cliente, c.phone, m.plate, m.model, m.year
+         FROM ordenes o
+         LEFT JOIN clientes c ON c.id=o.customerId
+         LEFT JOIN motos m ON m.id=o.bikeId
+         WHERE o.id=?`, [ordenId])[0];
     if (!row?.phone) { console.log('[WA Notify] orden', ordenId, 'sin teléfono'); return; }
-    const phone = formatPhoneCO(row.phone);
-    const text = builder(row.name || 'cliente');
+    const tpl = query("SELECT body FROM templates WHERE key=?", [tplKey])[0];
+    if (!tpl?.body) { console.log('[WA Notify] sin plantilla', tplKey); return; }
+    const text = renderTemplate(tpl.body, {
+      cliente: row.cliente || 'cliente',
+      placa: row.plate || '',
+      moto: [row.model, row.year].filter(Boolean).join(' ') || '',
+      orden: row.number || '',
+      estado: STATUS_LABELS[estado] || estado,
+    });
+
+    // Modo prueba: redirige a número de prueba
+    let target = row.phone;
+    try {
+      const cfg = Object.fromEntries(query("SELECT clave, valor FROM configuracion WHERE clave IN ('modo_prueba','numero_prueba')").map(r => [r.clave, r.valor]));
+      if (cfg.modo_prueba === '1' && cfg.numero_prueba) target = cfg.numero_prueba;
+    } catch {}
+    const phone = formatPhone(target);
+    if (!phone) return;
+
     if (waGetStatus().status !== 'connected') {
       console.warn('[WA Notify] WhatsApp no conectado, mensaje no enviado a', phone);
+      try {
+        exec("INSERT INTO whatsapp_mensajes (entidad_id, tipo, telefono, mensaje, estado) VALUES (?,?,?,?,?)",
+          [ordenId, tplKey, phone, text, 'pendiente']);
+      } catch {}
       return;
     }
     await waSend(phone, text);
+    try {
+      exec("INSERT INTO whatsapp_mensajes (entidad_id, tipo, telefono, mensaje, estado, fecha_envio) VALUES (?,?,?,?,?,?)",
+        [ordenId, tplKey, phone, text, 'enviado', new Date().toISOString()]);
+    } catch {}
     console.log(`[WA Notify] enviado a ${phone}: "${text}"`);
   } catch (e) {
     console.error('[WA Notify] error:', e.message);
   }
 }
+// alias de compatibilidad
+const formatPhoneCO = formatPhone;
 
-const DB_DIR = path.join(process.env.APPDATA || process.env.HOME || '', 'MotoFlowPro');
+// Crea factura + movimiento de caja al entregar una orden (idempotente).
+function billOrderOnDelivery(ordenId, method = 'efectivo') {
+  try {
+    const orden = query('SELECT * FROM ordenes WHERE id=?', [ordenId])[0];
+    if (!orden) return;
+    const existing = query('SELECT id FROM ventas WHERE orderId=?', [ordenId])[0];
+    if (existing) return; // ya facturada
+    const parts = JSON.parse(orden.parts || '[]');
+    const services = JSON.parse(orden.services || '[]');
+    const total = orden.total
+      || parts.reduce((s, p) => s + (Number(p.price) || 0) * (Number(p.qty) || 1), 0)
+       + services.reduce((s, sv) => s + (Number(sv.price) || 0), 0);
+    const n = query("SELECT value FROM counters WHERE key='sale'")[0]?.value || 0;
+    exec("INSERT OR IGNORE INTO counters(key,value) VALUES('sale',0)");
+    exec("UPDATE counters SET value=value+1 WHERE key='sale'");
+    const number = 'FAC-' + String(parseInt(n) + 1).padStart(4, '0');
+    const items = [
+      ...parts,
+      ...services.map(s => ({ name: s.description, price: s.price, qty: 1 })),
+    ];
+    exec(`INSERT INTO ventas (number, items, method, date, total, type, orderId)
+          VALUES (?,?,?,?,?,?,?)`,
+      [number, JSON.stringify(items), method, todayISO(), total, 'orden', ordenId]);
+    const ventaId = lastId();
+    exec(`INSERT INTO caja (date, type, amount, concept, refType, refId)
+          VALUES (?,?,?,?,?,?)`,
+      [todayISO(), 'ingreso', total, `Venta ${number} (orden ${orden.number})`, 'venta', ventaId]);
+  } catch (e) {
+    console.warn('[billOrderOnDelivery]', e.message);
+  }
+}
+
+const DB_DIR = process.env.MOTOFLOW_DATA_DIR
+  || path.join(process.env.APPDATA || process.env.HOME || '', 'MotoFlowPro');
 const DB_PATH = path.join(DB_DIR, 'taller.db');
 const WWW_ROOT = path.join(__dirname, '../server/www');
 const INIT_SQL = path.join(WWW_ROOT, 'sql/init.sql');
@@ -64,7 +157,8 @@ const ALIAS = {
 const TABLES = [
   'usuarios','clientes','motos','ordenes','detalle_orden','productos',
   'proveedores','compras','empleados','pagos_empleados','caja','ventas',
-  'notas','garantias','templates','counters','configuracion','whatsapp_mensajes'
+  'notas','garantias','templates','counters','configuracion','whatsapp_mensajes',
+  'historial_ordenes'
 ];
 
 // Resolved resource name (applies alias if needed)
@@ -80,12 +174,60 @@ async function initDB() {
     locateFile: f => path.join(__dirname, '../node_modules/sql.js/dist', f)
   });
   fs.mkdirSync(DB_DIR, { recursive: true });
+  console.log('[DB] Carpeta de datos:', DB_DIR);
   if (fs.existsSync(DB_PATH)) {
     db = new SQL.Database(fs.readFileSync(DB_PATH));
   } else {
     db = new SQL.Database();
     db.run(fs.readFileSync(INIT_SQL, 'utf8'));
     saveDB();
+  }
+  ensureSchema();
+  ensureAdminUser();
+}
+
+// Aplica CREATE TABLE IF NOT EXISTS de tablas que pueden faltar en DBs viejos
+// y siembra plantillas WA si no existen.
+function ensureSchema() {
+  try {
+    db.run(`CREATE TABLE IF NOT EXISTS historial_ordenes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      orderId INTEGER NOT NULL,
+      fromStatus TEXT,
+      toStatus TEXT,
+      note TEXT,
+      changedBy TEXT,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    )`);
+    const tpls = [
+      ['ingresada', 'Ingresada al taller', 'Hola {cliente}, tu moto *{placa}* ({moto}) fue recibida en nuestro taller. Orden: *{orden}*. Te avisaremos cuando esté lista. ¡Gracias por tu confianza!'],
+      ['diagnostico', 'En diagnóstico', 'Hola {cliente}, estamos haciendo el diagnóstico de tu moto *{placa}* (orden {orden}). Te confirmamos pronto el detalle de la reparación.'],
+      ['esperando_repuestos', 'Esperando repuestos', 'Hola {cliente}, tu moto *{placa}* está en espera de repuestos para continuar. Orden: *{orden}*. Te avisamos cuando lleguen.'],
+      ['reparacion', 'En reparación', 'Hola {cliente}, tu moto *{placa}* ({moto}) está en reparación. Orden: *{orden}*. Te informamos cuando esté lista.'],
+      ['lista', 'Lista para entregar', '¡Hola {cliente}! Tu moto *{placa}* ({moto}) ya está lista para recoger. Orden: *{orden}*. ¡Te esperamos!'],
+      ['entregada', 'Entrega completada', 'Gracias {cliente} por confiar en nosotros. Tu moto *{placa}* fue entregada. Factura asociada a la orden *{orden}*. ¡Hasta la próxima!'],
+    ];
+    for (const [key, label, body] of tpls) {
+      db.run("INSERT OR IGNORE INTO templates(key,label,body) VALUES(?,?,?)", [key, label, body]);
+    }
+    saveDB();
+  } catch (e) { console.error('[DB] ensureSchema:', e.message); }
+}
+
+// Garantiza que exista el usuario admin/admin. Si MOTOFLOW_RESET_ADMIN=1 fuerza la
+// contraseña a 'admin'. Sin esa env, no pisa contraseñas que el usuario haya cambiado.
+function ensureAdminUser() {
+  try {
+    const rows = query("SELECT id, password FROM usuarios WHERE LOWER(username)='admin'");
+    if (!rows.length) {
+      exec("INSERT INTO usuarios(username,password,name,role,active) VALUES('admin','admin','Administrador','admin',1)");
+      console.log('[DB] Usuario admin creado (password: admin)');
+    } else if (process.env.MOTOFLOW_RESET_ADMIN === '1') {
+      exec("UPDATE usuarios SET password='admin', active=1 WHERE LOWER(username)='admin'");
+      console.log('[DB] Contraseña de admin restablecida a "admin"');
+    }
+  } catch (e) {
+    console.error('[DB] ensureAdminUser error:', e.message);
   }
 }
 
@@ -304,6 +446,35 @@ export async function startDBServer(port) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  // ── /php/buscar?action=global ────────────────────────────────
+  app.all('/php/buscar', (req, res) => {
+    try {
+      const action = req.query.action || req.body?.action || '';
+      if (action !== 'global') return res.status(400).json({ error: 'Acción no soportada' });
+      const q = String(req.query.q || req.body?.q || '').trim();
+      if (q.length < 2) return res.json({ ordenes: [], clientes: [], productos: [] });
+      const like = `%${q.toLowerCase()}%`;
+      const ordenes = query(
+        `SELECT o.id, o.number, o.status, o.total, c.name as cliente_name, m.plate
+           FROM ordenes o
+           LEFT JOIN clientes c ON c.id=o.customerId
+           LEFT JOIN motos m ON m.id=o.bikeId
+           WHERE o.active=1 AND (
+             LOWER(o.number) LIKE ? OR LOWER(c.name) LIKE ? OR LOWER(m.plate) LIKE ? OR LOWER(o.problem) LIKE ?
+           ) LIMIT 20`, [like, like, like, like]);
+      const clientes = query(
+        `SELECT c.id, c.name, c.phone, (SELECT COUNT(*) FROM motos m WHERE m.customerId=c.id) as motos_count
+           FROM clientes c
+           WHERE c.active=1 AND (LOWER(c.name) LIKE ? OR LOWER(c.phone) LIKE ?)
+           LIMIT 20`, [like, like]);
+      const productos = query(
+        `SELECT id, code, name, shelf, stock, price FROM productos
+           WHERE active=1 AND (LOWER(name) LIKE ? OR LOWER(code) LIKE ?)
+           LIMIT 20`, [like, like]);
+      res.json({ ordenes, clientes, productos });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   // ── Generic /php/:resource handler ───────────────────────────
   app.all('/php/:resource', (req, res) => {
     try {
@@ -325,12 +496,15 @@ export async function startDBServer(port) {
         const id = data.id;
         const status = data.status || data.estado;
         if (!id || !status) return res.status(400).json({ error: 'id y status requeridos' });
+        const prev = query('SELECT status FROM ordenes WHERE id=?', [id])[0];
         exec('UPDATE ordenes SET status=? WHERE id=?', [status, id]);
-        notifyOrden(id, status);
+        if (status === 'entregada') billOrderOnDelivery(id);
+        notifyOrden(id, status, prev?.status || null);
         return res.json({ ok: true });
       }
 
-      if (action === '' || action === 'listar') {
+      const SPECIALIZED_LIST = ['ventas','compras','garantias','caja'];
+      if ((action === '' || action === 'listar') && !SPECIALIZED_LIST.includes(resource)) {
         // Ordenes: include joined cliente_name and plate
         if (resource === 'ordenes') {
           const all = data.all === '1' || data.all === 1;
@@ -358,7 +532,9 @@ export async function startDBServer(port) {
         const rows = query(`SELECT * FROM ${resource} WHERE ${where} LIMIT 20`, searchableCols.map(() => q));
         return res.json(rows.map(r => parseRow(resource, r)));
       }
-      if (action === 'crear' && resource !== 'ordenes') {
+      // Handler genérico de "crear". Las tablas con lógica especial
+      // (ventas, compras, ordenes) se manejan más abajo y caen primero.
+      if (action === 'crear' && !['ordenes','ventas','compras'].includes(resource)) {
         const { cols, vals, placeholders } = buildInsert(resource, data);
         exec(`INSERT INTO ${resource} (${cols.join(',')}) VALUES (${placeholders})`, vals);
         const id = lastId();
@@ -368,11 +544,17 @@ export async function startDBServer(port) {
       if (action === 'actualizar' || action === 'cambiar_estado' || action.startsWith('actualizar_')) {
         const { id, ...rest } = data;
         if (!id) return res.status(400).json({ error: 'ID requerido' });
+        let prev = null;
+        if (resource === 'ordenes') {
+          prev = query('SELECT status FROM ordenes WHERE id=?', [id])[0];
+        }
         const { setClause, vals } = buildUpdate(resource, rest, id);
         if (setClause) exec(`UPDATE ${resource} SET ${setClause} WHERE id=?`, vals);
         const row = query(`SELECT * FROM ${resource} WHERE id=?`, [id]);
         if (resource === 'ordenes' && (rest.status || rest.estado)) {
-          notifyOrden(id, rest.status || rest.estado);
+          const nuevo = rest.status || rest.estado;
+          if (nuevo === 'entregada') billOrderOnDelivery(id);
+          notifyOrden(id, nuevo, prev?.status || null);
         }
         return res.json(parseRow(resource, row[0] || {}));
       }
@@ -454,33 +636,174 @@ export async function startDBServer(port) {
           const parts = JSON.parse(orden.parts || '[]');
           const services = JSON.parse(orden.services || '[]');
           const total = parts.reduce((s, p) => s + (p.price * (p.qty || 1)), 0) + services.reduce((s, sv) => s + sv.price, 0);
+          const fromStatus = orden.status;
           exec("UPDATE ordenes SET status='lista', total=? WHERE id=?", [total, data.id]);
-          notifyOrden(data.id, 'lista');
+          notifyOrden(data.id, 'lista', fromStatus);
           return res.json({ ok: true, total });
+        }
+        if (action === 'historial') {
+          const id = data.id;
+          if (!id) return res.status(400).json({ error: 'ID requerido' });
+          const rows = query(
+            'SELECT * FROM historial_ordenes WHERE orderId=? ORDER BY id DESC', [id]);
+          return res.json(rows);
+        }
+        if (action === 'entregar') {
+          const orden = query('SELECT * FROM ordenes WHERE id=?', [data.id])[0];
+          if (!orden) return res.status(404).json({ error: 'Orden no encontrada' });
+          const parts = JSON.parse(orden.parts || '[]');
+          const services = JSON.parse(orden.services || '[]');
+          const total = orden.total || (parts.reduce((s,p) => s + (p.price * (p.qty || 1)), 0) + services.reduce((s, sv) => s + sv.price, 0));
+          const fromStatus = orden.status;
+          exec("UPDATE ordenes SET status='entregada', total=? WHERE id=?", [total, data.id]);
+          // Crear factura/venta vinculada
+          const n = query("SELECT value FROM counters WHERE key='sale'")[0]?.value || 0;
+          exec("INSERT OR IGNORE INTO counters(key,value) VALUES('sale',0)");
+          exec("UPDATE counters SET value=value+1 WHERE key='sale'");
+          const number = 'FAC-' + String(parseInt(n) + 1).padStart(4, '0');
+          const items = [...parts, ...services.map(s => ({ name: s.description, price: s.price, qty: 1 }))];
+          exec(`INSERT INTO ventas (number, items, method, date, total, type, orderId) VALUES (?,?,?,?,?,?,?)`,
+            [number, JSON.stringify(items), data.method || 'efectivo', todayISO(), total, 'orden', data.id]);
+          const ventaId = lastId();
+          // Movimiento de caja
+          exec(`INSERT INTO caja (date, type, amount, concept, refType, refId) VALUES (?,?,?,?,?,?)`,
+            [todayISO(), 'ingreso', total, `Venta ${number} (orden ${orden.number})`, 'venta', ventaId]);
+          notifyOrden(data.id, 'entregada', fromStatus);
+          return res.json({ ok: true, total, ventaNumber: number });
         }
       }
 
-      // Ventas
+      // ── Ventas (mostrador) ─────────────────────────────────────
       if (resource === 'ventas' && action === 'crear') {
+        const items = data.items || [];
+        const total = Number(data.total) || items.reduce((s, it) => s + Number(it.unitPrice || it.price || 0) * Number(it.qty || 1), 0);
         const n = query("SELECT value FROM counters WHERE key='sale'")[0]?.value || 0;
         exec("INSERT OR IGNORE INTO counters(key,value) VALUES('sale',0)");
         exec("UPDATE counters SET value=value+1 WHERE key='sale'");
-        const num = (parseInt(n) + 1);
-        const number = 'FAC-' + String(num).padStart(4, '0');
-        exec(`INSERT INTO ventas (number, items, method, date, total) VALUES (?,?,?,?,?)`,
-          [number, JSON.stringify(data.items || []), data.method || 'efectivo', todayISO(), data.total || 0]);
+        const number = 'FAC-' + String(parseInt(n) + 1).padStart(4, '0');
+        exec(`INSERT INTO ventas (number, items, method, date, total, type, orderId) VALUES (?,?,?,?,?,?,?)`,
+          [number, JSON.stringify(items), data.method || 'efectivo', data.date || todayISO(), total, 'mostrador', null]);
         const id = lastId();
-        for (const item of (data.items || [])) {
+        for (const item of items) {
           if (item.productId) exec('UPDATE productos SET stock=stock-? WHERE id=?', [item.qty || 1, item.productId]);
         }
-        return res.status(201).json({ ok: true, id, number });
+        // Movimiento de caja por venta de mostrador
+        exec(`INSERT INTO caja (date, type, amount, concept, refType, refId) VALUES (?,?,?,?,?,?)`,
+          [data.date || todayISO(), 'ingreso', total, `Venta ${number}`, 'venta', id]);
+        return res.status(201).json({ ok: true, id, number, total });
+      }
+      if (resource === 'ventas' && action === 'listar') {
+        const rows = query(
+          `SELECT v.*, o.number as orden_number FROM ventas v
+            LEFT JOIN ordenes o ON o.id=v.orderId
+            ORDER BY v.id DESC`);
+        return res.json(rows.map(r => ({ ...r, items: (() => { try { return JSON.parse(r.items || '[]'); } catch { return []; } })() })));
       }
 
-      // Empleados - pagos
+      // ── Compras ────────────────────────────────────────────────
+      if (resource === 'compras' && action === 'crear') {
+        const items = data.items || [];
+        const total = Number(data.total) || items.reduce((s, it) => s + Number(it.cost || 0) * Number(it.qty || 1), 0);
+        const supplierId = data.supplierId || null;
+        const date = data.date || todayISO();
+        exec(`INSERT INTO compras (supplierId, date, total, items, active) VALUES (?,?,?,?,1)`,
+          [supplierId, date, total, JSON.stringify(items)]);
+        const id = lastId();
+        // Subir stock y costo de productos
+        for (const it of items) {
+          if (it.productId) {
+            exec('UPDATE productos SET stock=stock+?, cost=? WHERE id=?',
+              [Number(it.qty) || 1, Number(it.cost) || 0, it.productId]);
+          }
+        }
+        // Movimiento de caja por compra (egreso)
+        if (total > 0) {
+          exec(`INSERT INTO caja (date, type, amount, concept, refType, refId) VALUES (?,?,?,?,?,?)`,
+            [date, 'egreso', total, `Compra a proveedor`, 'compra', id]);
+        }
+        return res.status(201).json({ ok: true, id, total });
+      }
+      if (resource === 'compras' && action === 'listar') {
+        const rows = query(
+          `SELECT c.*, p.name as proveedor_name FROM compras c
+            LEFT JOIN proveedores p ON p.id=c.supplierId
+            ORDER BY c.id DESC`);
+        return res.json(rows.map(r => ({ ...r, items: (() => { try { return JSON.parse(r.items || '[]'); } catch { return []; } })() })));
+      }
+
+      // ── Caja ───────────────────────────────────────────────────
+      if (resource === 'caja' && action === 'crear') {
+        const date = data.date || todayISO();
+        exec(`INSERT INTO caja (date, type, amount, concept, refType, refId) VALUES (?,?,?,?,?,?)`,
+          [date, data.type, Number(data.amount) || 0, data.concept || '', data.refType || 'manual', data.refId || null]);
+        return res.status(201).json({ ok: true, id: lastId() });
+      }
+      if (resource === 'caja' && action === 'listar') {
+        const fecha = data.fecha || todayISO();
+        return res.json(query("SELECT * FROM caja WHERE date=? ORDER BY id DESC", [fecha]));
+      }
+      if (resource === 'caja' && action === 'resumen') {
+        const fecha = data.fecha || todayISO();
+        const rows = query("SELECT type, SUM(amount) as total FROM caja WHERE date=? GROUP BY type", [fecha]);
+        const r = { ingresos: 0, egresos: 0 };
+        rows.forEach(x => { if (x.type === 'ingreso') r.ingresos = x.total; if (x.type === 'egreso') r.egresos = x.total; });
+        r.balance = (r.ingresos || 0) - (r.egresos || 0);
+        return res.json(r);
+      }
+
+      // ── Empleados pagos ────────────────────────────────────────
       if (resource === 'empleados' && action === 'pagos_crear') {
+        const date = data.date || todayISO();
+        const amount = Number(data.amount) || 0;
         exec('INSERT INTO pagos_empleados (employeeId, amount, date, note) VALUES (?,?,?,?)',
-          [data.employeeId, data.amount, data.date || todayISO(), data.note || '']);
-        return res.json({ ok: true, id: lastId() });
+          [data.employeeId, amount, date, data.note || '']);
+        const id = lastId();
+        if (amount > 0) {
+          const emp = query('SELECT name FROM empleados WHERE id=?', [data.employeeId])[0];
+          exec(`INSERT INTO caja (date, type, amount, concept, refType, refId) VALUES (?,?,?,?,?,?)`,
+            [date, 'egreso', amount, `Pago a ${emp?.name || 'empleado'}`, 'pago_empleado', id]);
+        }
+        return res.json({ ok: true, id });
+      }
+      if (resource === 'empleados' && action === 'pagos_listar') {
+        const empId = data.empleado_id || data.employeeId;
+        const where = empId ? 'WHERE p.employeeId=?' : '';
+        const params = empId ? [empId] : [];
+        return res.json(query(
+          `SELECT p.*, e.name as empleado_name FROM pagos_empleados p
+            LEFT JOIN empleados e ON e.id=p.employeeId
+            ${where} ORDER BY p.id DESC`, params));
+      }
+
+      // ── Garantías ──────────────────────────────────────────────
+      if (resource === 'garantias' && action === 'listar') {
+        const rows = query(
+          `SELECT g.*, c.name as cliente_name, m.plate, m.model, o.number as orden_number
+             FROM garantias g
+             LEFT JOIN clientes c ON c.id=g.customerId
+             LEFT JOIN motos m ON m.id=g.bikeId
+             LEFT JOIN ordenes o ON o.id=g.orderId
+             ORDER BY g.id DESC`);
+        return res.json(rows);
+      }
+      if (resource === 'garantias' && action === 'motos_entregadas') {
+        const rows = query(
+          `SELECT o.id as orderId, o.number, o.entryDate, c.id as customerId, c.name as cliente_name,
+                  m.id as bikeId, m.plate, m.model, m.year
+             FROM ordenes o
+             LEFT JOIN clientes c ON c.id=o.customerId
+             LEFT JOIN motos m ON m.id=o.bikeId
+             WHERE o.status='entregada' AND o.active=1
+             ORDER BY o.id DESC LIMIT 200`);
+        return res.json(rows);
+      }
+      if (resource === 'garantias' && action === 'crear') {
+        const now = new Date().toISOString();
+        exec(`INSERT INTO garantias (orderId, customerId, bikeId, description, expiresAt, status, createdAt)
+              VALUES (?,?,?,?,?,?,?)`,
+          [data.orderId || null, data.customerId || null, data.bikeId || null,
+           data.description || '', data.expiresAt || null, data.status || 'activa', now]);
+        return res.status(201).json({ ok: true, id: lastId() });
       }
 
       res.status(400).json({ error: `Acción no soportada: ${action}` });

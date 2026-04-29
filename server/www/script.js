@@ -262,7 +262,9 @@ function renderOrdenDetalle(d) {
       ${locked ? '<span class="badge" style="background:#e2e8f0;color:#64748b">🔒 Bloqueada</span>' : ''}
       <div style="margin-left:auto;display:flex;gap:8px">
         <button class="btn btn-outline" onclick="window.print()">🖨 Imprimir</button>
-        ${!locked ? `<button class="btn btn-success" onclick="finalizarOrden(${d.id})">Finalizar orden</button>` : ''}
+        <button class="btn btn-ghost" onclick="verHistorialOrden(${d.id})">📜 Historial</button>
+        ${d.status === 'lista' ? `<button class="btn btn-primary" onclick="entregarOrden(${d.id})">Entregar y facturar</button>` : ''}
+        ${!locked && d.status !== 'entregada' ? `<button class="btn btn-success" onclick="finalizarOrden(${d.id})">Finalizar orden</button>` : ''}
       </div>
     </div>
     <div class="order-grid mb-4">
@@ -429,11 +431,38 @@ async function quitarFoto(orderId, idx) {
 }
 
 async function finalizarOrden(id) {
-  if (!confirm('¿Finalizar orden? Quedará bloqueada y se descontará el inventario.')) return;
+  if (!confirm('¿Finalizar orden? Pasará a "lista para entregar".')) return;
   const r = await api('ordenes', 'finalizar', { id });
   if (r.error) { toast(r.error, 'error'); return; }
-  toast(`Orden finalizada. Factura ${r.factura} ✓`, 'success');
+  toast(`Orden lista. Total ${money(r.total)} ✓`, 'success');
   openOrdenDetalle(id);
+}
+
+async function entregarOrden(id) {
+  if (!confirm('¿Entregar moto al cliente? Se generará la factura y se registrará el ingreso en caja.')) return;
+  const r = await api('ordenes', 'entregar', { id });
+  if (r.error) { toast(r.error, 'error'); return; }
+  toast(`Entregada. Factura ${r.ventaNumber} · ${money(r.total)} ✓`, 'success');
+  openOrdenDetalle(id);
+}
+
+async function verHistorialOrden(id) {
+  const rows = await api('ordenes', 'historial', { id });
+  const list = (rows || []).map(h =>
+    `<tr><td>${dateShort(h.createdAt)}</td><td>${h.fromStatus ? STATUS_LABELS[h.fromStatus] || h.fromStatus : '—'}</td><td>→</td><td><span class="badge badge-${h.toStatus}">${STATUS_LABELS[h.toStatus] || h.toStatus}</span></td><td>${h.note || ''}</td></tr>`
+  ).join('') || '<tr><td colspan="5" class="empty-state">Sin cambios registrados</td></tr>';
+  const html = `<table><thead><tr><th>Fecha</th><th>Desde</th><th></th><th>A</th><th>Nota</th></tr></thead><tbody>${list}</tbody></table>`;
+  // Modal simple inline
+  let modal = document.getElementById('modal-historial');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'modal-historial';
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `<div class="modal" style="max-width:640px"><button class="modal-close" onclick="document.getElementById('modal-historial').classList.add('hidden')">✕</button><h2>Historial de la orden</h2><div id="modal-historial-body"></div></div>`;
+    document.body.appendChild(modal);
+  }
+  modal.querySelector('#modal-historial-body').innerHTML = html;
+  modal.classList.remove('hidden');
 }
 
 // ─── INVENTARIO ───────────────────────────────
@@ -777,32 +806,59 @@ async function saveMovimiento() {
 // ─── GARANTÍAS ────────────────────────────────
 async function loadGarantias() {
   const rows = await get('garantias', 'listar');
-  document.getElementById('gar-tbody').innerHTML = rows.map(g => `<tr>
+  document.getElementById('gar-tbody').innerHTML = (rows || []).map(g => `<tr>
     <td>${g.cliente_name||'-'}</td>
     <td class="font-mono">${g.plate||'-'}</td>
-    <td>${g.description}</td>
+    <td>${g.orden_number ? `<span class="font-mono">${g.orden_number}</span>` : '-'}</td>
+    <td>${g.description||''}</td>
     <td>${dateShort(g.expiresAt)}</td>
     <td><span class="badge badge-${g.status}">${g.status}</span></td>
-    <td><button class="btn btn-outline btn-sm btn-icon" onclick="openModalGarantia(${g.id})">✏️</button></td>
-  </tr>`).join('') || '<tr><td colspan="6" class="empty-state">Sin garantías</td></tr>';
+    <td class="flex gap-2">
+      ${g.orderId ? `<button class="btn btn-outline btn-sm" onclick="openOrdenDetalle(${g.orderId})" title="Ver orden">🔍 Orden</button>` : ''}
+      <button class="btn btn-outline btn-sm btn-icon" onclick="openModalGarantia(${g.id})" title="Editar">✏️</button>
+      <button class="btn btn-danger btn-sm btn-icon" onclick="eliminarGarantia(${g.id})" title="Eliminar">🗑</button>
+    </td>
+  </tr>`).join('') || '<tr><td colspan="7" class="empty-state">Sin garantías. Crea una desde una moto entregada.</td></tr>';
 }
 
-function openModalGarantia(id) {
+async function eliminarGarantia(id) {
+  if (!confirm('¿Eliminar garantía?')) return;
+  await api('garantias', 'eliminar', { id });
+  toast('Eliminada');
+  loadGarantias();
+}
+
+async function openModalGarantia(id) {
   document.getElementById('gar-id').value = id || '';
   document.getElementById('gar-desc').value = '';
   document.getElementById('gar-expires').value = '';
   document.getElementById('gar-status').value = 'activa';
+  // Cargar motos entregadas
+  const sel = document.getElementById('gar-orden');
+  sel.innerHTML = '<option value="">-- Selecciona una moto entregada --</option>';
+  try {
+    const motos = await get('garantias', 'motos_entregadas');
+    sel.innerHTML += motos.map(m =>
+      `<option value="${m.orderId}" data-customer="${m.customerId}" data-bike="${m.bikeId}">${m.plate || '-'} · ${m.cliente_name || '-'} · ${m.number}</option>`
+    ).join('');
+  } catch (e) { console.warn('motos_entregadas:', e); }
   openModal('modal-garantia');
 }
 
 async function saveGarantia() {
   const id = document.getElementById('gar-id').value;
+  const sel = document.getElementById('gar-orden');
+  const opt = sel.options[sel.selectedIndex];
   const data = {
+    orderId: opt && sel.value ? parseInt(sel.value) : null,
+    customerId: opt && opt.dataset.customer ? parseInt(opt.dataset.customer) : null,
+    bikeId: opt && opt.dataset.bike ? parseInt(opt.dataset.bike) : null,
     description: document.getElementById('gar-desc').value.trim(),
     expiresAt: document.getElementById('gar-expires').value || null,
     status: document.getElementById('gar-status').value,
   };
   if (!data.description) { toast('Descripción requerida', 'error'); return; }
+  if (!id && !data.orderId) { toast('Selecciona una moto entregada', 'error'); return; }
   const r = id ? await api('garantias', 'actualizar', { id: parseInt(id), ...data }) : await api('garantias', 'crear', data);
   if (r.error) { toast(r.error, 'error'); return; }
   toast('Guardado ✓', 'success');

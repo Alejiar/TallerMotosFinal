@@ -182,6 +182,17 @@ CREATE TABLE IF NOT EXISTS whatsapp_mensajes (
   createdAt TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
+CREATE TABLE IF NOT EXISTS historial_ordenes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  orderId INTEGER NOT NULL,
+  fromStatus TEXT,
+  toStatus TEXT,
+  note TEXT,
+  changedBy TEXT,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  FOREIGN KEY(orderId) REFERENCES ordenes(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS configuracion (
   clave TEXT PRIMARY KEY,
   valor TEXT NOT NULL DEFAULT ''
@@ -202,9 +213,12 @@ VALUES(1,'admin','admin','Administrador','admin',1);
 INSERT OR IGNORE INTO counters(key,value) VALUES('order',0),('sale',0);
 
 INSERT OR IGNORE INTO templates(key,label,body) VALUES
-  ('ingreso','Ingreso de moto','Hola {cliente}, tu moto *{placa}* ({moto}) fue recibida en nuestro taller. Orden: *{orden}*. Te avisaremos cuando esté lista. ¡Gracias por tu confianza!'),
-  ('proceso','En proceso','Hola {cliente}, tu moto *{placa}* continúa en reparación. Estado actual: *{estado}*. Si tienes dudas, escríbenos.'),
-  ('finalizacion','Lista para entregar','¡Hola {cliente}! Tu moto *{placa}* ({moto}) ya está lista para recoger. Orden: *{orden}*. ¡Gracias por preferirnos!');
+  ('ingresada','Ingresada al taller','Hola {cliente}, tu moto *{placa}* ({moto}) fue recibida en nuestro taller. Orden: *{orden}*. Te avisaremos cuando esté lista. ¡Gracias por tu confianza!'),
+  ('diagnostico','En diagnóstico','Hola {cliente}, estamos haciendo el diagnóstico de tu moto *{placa}* (orden {orden}). Te confirmamos pronto el detalle de la reparación.'),
+  ('esperando_repuestos','Esperando repuestos','Hola {cliente}, tu moto *{placa}* está en espera de repuestos para continuar. Orden: *{orden}*. Te avisamos cuando lleguen.'),
+  ('reparacion','En reparación','Hola {cliente}, tu moto *{placa}* ({moto}) está en reparación. Orden: *{orden}*. Te informamos cuando esté lista.'),
+  ('lista','Lista para entregar','¡Hola {cliente}! Tu moto *{placa}* ({moto}) ya está lista para recoger. Orden: *{orden}*. ¡Te esperamos!'),
+  ('entregada','Entrega completada','Gracias {cliente} por confiar en nosotros. Tu moto *{placa}* fue entregada. Factura asociada a la orden *{orden}*. ¡Hasta la próxima!');
 
 INSERT OR IGNORE INTO configuracion(clave,valor) VALUES
   ('modo_prueba','0'),

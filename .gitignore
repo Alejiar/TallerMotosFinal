@@ -21,6 +21,7 @@ wa.log
 *.db
 *.db-journal
 php_test.log
+data/
 
 # Carpeta de pruebas obsoleta
 whatsapp-backend/
