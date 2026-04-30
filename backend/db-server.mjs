@@ -541,7 +541,7 @@ export async function startDBServer(port) {
   });
 
   // ── whatsapp config/history (special endpoints) ──────────────
-  app.all('/php/whatsapp', (req, res) => {
+  app.all('/php/whatsapp', async (req, res) => {
     try {
       const action = req.query.action || req.body?.action || '';
       const data = { ...(req.body || {}), ...(req.query || {}) };
