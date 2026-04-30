@@ -326,7 +326,7 @@ async function loadMotos() {
           <div class="kanban-problem">${o.problem || 'Sin descripción'}</div>
           <div class="kanban-date">📅 ${dateShort(o.entryDate)}${o.estimatedDate ? ' · Entrega: '+dateShort(o.estimatedDate) : ''}</div>
           <div class="kanban-actions">
-            <select onchange="cambiarEstadoKanban(${o.id},this.value)">
+            <select onchange="cambiarEstadoKanban(${o.id},this.value,'${o.status}',${o.asignadoId||0})">
               ${Object.entries(STATUS_LABELS).map(([k,v]) => `<option value="${k}"${k===o.status?' selected':''}>${v}</option>`).join('')}
             </select>
             <button class="btn btn-outline btn-sm btn-icon" onclick="openOrdenDetalle(${o.id})" title="Ver detalle">👁</button>
@@ -338,7 +338,20 @@ async function loadMotos() {
   }).join('');
 }
 
-async function cambiarEstadoKanban(id, status) {
+async function cambiarEstadoKanban(id, status, currentStatus, asignadoId) {
+  if (currentStatus === 'ingresada' && status !== 'ingresada' && !asignadoId) {
+    _pendingStatusChange = { id, status, fromKanban: true };
+    if (!empleadosData.length) await loadEmpleados();
+    const sel = document.getElementById('asignar-empleado');
+    if (sel) {
+      sel.innerHTML = '<option value="">Seleccionar trabajador...</option>' +
+        empleadosData.map(e =>
+          `<option value="${e.id}">${e.name}${e.role ? ' – ' + e.role : ''}</option>`
+        ).join('');
+    }
+    openModal('modal-asignar-trabajador');
+    return;
+  }
   const r = await api('motos', 'cambiar_estado', { id, status });
   if (r.error) { toast(r.error, 'error'); return; }
   toast('Estado actualizado');
@@ -580,13 +593,13 @@ async function confirmarAsignacion() {
   if (!_pendingStatusChange) return;
   const empId = document.getElementById('asignar-empleado')?.value;
   if (!empId) { toast('Debes seleccionar un trabajador', 'warning'); return; }
-  const { id, status } = _pendingStatusChange;
+  const { id, status, fromKanban } = _pendingStatusChange;
   const r = await api('ordenes', 'actualizar_estado', { id, status, asignadoId: parseInt(empId) });
   if (r.error) { toast(r.error, 'error'); return; }
   toast('Trabajador asignado y estado actualizado ✓', 'success');
   closeModal('modal-asignar-trabajador');
   _pendingStatusChange = null;
-  openOrdenDetalle(id);
+  if (fromKanban) loadMotos(); else openOrdenDetalle(id);
 }
 
 function cancelarAsignacion() {
