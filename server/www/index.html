@@ -265,9 +265,10 @@
             <div id="wa-qr-wrap" class="hidden"><img id="wa-qr" src="" alt="QR WhatsApp"></div>
             <div id="wa-spinner" class="spinner hidden"></div>
             <div id="wa-error" class="text-danger text-sm mt-2 hidden"></div>
-            <div class="flex gap-2 mt-3" style="justify-content:center">
+            <div class="flex gap-2 mt-3" style="justify-content:center;flex-wrap:wrap">
               <button class="btn btn-primary" id="wa-btn-connect" onclick="waConnect()">Conectar</button>
               <button class="btn btn-outline hidden" id="wa-btn-disconnect" onclick="waDisconnect()">Desconectar</button>
+              <button class="btn btn-outline" onclick="waResetSession()" title="Borra la sesión guardada y solicita nuevo QR">🗑 Limpiar sesión</button>
             </div>
           </div>
           <div class="card">

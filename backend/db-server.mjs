@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { createRequire } from 'module';
-import { sendMessage as waSend, getStatus as waGetStatus } from './whatsapp-service.mjs';
+import { sendMessage as waSend, getStatus as waGetStatus, resetSession as waResetSession } from './whatsapp-service.mjs';
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -560,6 +560,12 @@ export async function startDBServer(port) {
       }
       if (action === 'history') {
         return res.json(query("SELECT * FROM whatsapp_mensajes ORDER BY id DESC LIMIT 50"));
+      }
+      if (action === 'reset_session') {
+        try {
+          await waResetSession();
+          return res.json({ ok: true, msg: 'Sesión eliminada. Vuelve a conectar para generar nuevo QR.' });
+        } catch (e) { return res.status(500).json({ error: e.message }); }
       }
       if (action === 'send_test') {
         const tel = data.telefono || data.numero || data.phone;

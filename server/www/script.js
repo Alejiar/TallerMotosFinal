@@ -1433,6 +1433,16 @@ async function waDisconnect() {
   updateWAPage({ state: 'disconnected', qr: null, error: null });
 }
 
+async function waResetSession() {
+  if (!confirm('¿Limpiar sesión de WhatsApp? Se pedirá escanear el QR nuevamente.')) return;
+  try {
+    const r = await api('whatsapp', 'reset_session');
+    if (r.error) { toast(r.error, 'error'); return; }
+    toast('Sesión eliminada. Conecta de nuevo para generar el QR.', 'success');
+    updateWAPage({ state: 'disconnected', qr: null, error: null });
+  } catch (e) { toast('Error al limpiar sesión', 'error'); }
+}
+
 async function waConfigSave() {
   const modo = document.getElementById('wa-modo-prueba').checked;
   const num = document.getElementById('wa-num-prueba').value.trim();
