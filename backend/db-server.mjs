@@ -138,6 +138,7 @@ function billOrderOnDelivery(ordenId, method = 'efectivo') {
 const DB_DIR = process.env.MOTOFLOW_DATA_DIR
   || path.join(process.env.APPDATA || process.env.HOME || '', 'MotoFlowPro');
 const DB_PATH = path.join(DB_DIR, 'taller.db');
+const UPLOADS_DIR = path.join(DB_DIR, 'uploads');
 const WWW_ROOT = path.join(__dirname, '../server/www');
 const INIT_SQL = path.join(WWW_ROOT, 'sql/init.sql');
 
@@ -174,6 +175,7 @@ async function initDB() {
     locateFile: f => path.join(__dirname, '../node_modules/sql.js/dist', f)
   });
   fs.mkdirSync(DB_DIR, { recursive: true });
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
   console.log('[DB] Carpeta de datos:', DB_DIR);
   if (fs.existsSync(DB_PATH)) {
     db = new SQL.Database(fs.readFileSync(DB_PATH));
@@ -351,12 +353,101 @@ function buildUpdate(table, data, id) {
   return { setClause: cols.map(c => `${c}=?`).join(','), vals };
 }
 
+// ── Auto-cleanup: elimina registros con más de 60 días ────────────
+function runCleanup() {
+  try {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 60);
+    const cutoffStr = cutoff.toISOString().split('T')[0];
+
+    // Órdenes entregadas con más de 60 días desde su entryDate
+    const oldOrders = query(
+      `SELECT id, evidences FROM ordenes
+       WHERE status='entregada' AND entryDate <= ?`, [cutoffStr]);
+
+    for (const ord of oldOrders) {
+      // Eliminar archivos de imágenes de disco
+      let evs = [];
+      try { evs = JSON.parse(ord.evidences || '[]'); } catch {}
+      for (const ev of evs) {
+        if (ev && !ev.startsWith('data:') && ev.startsWith('/uploads/')) {
+          try { fs.unlinkSync(path.join(UPLOADS_DIR, path.basename(ev))); } catch {}
+        }
+      }
+      // Eliminar venta/factura asociada y su movimiento de caja
+      const venta = query('SELECT id FROM ventas WHERE orderId=?', [ord.id])[0];
+      if (venta) {
+        exec('DELETE FROM caja WHERE refType=? AND refId=?', ['venta', venta.id]);
+        exec('DELETE FROM ventas WHERE id=?', [venta.id]);
+      }
+      exec('DELETE FROM ordenes WHERE id=?', [ord.id]);
+    }
+
+    // Pagos de empleados ya liquidados con más de 60 días
+    exec(`DELETE FROM pagos_empleados WHERE estado='pagado' AND date <= ?`, [cutoffStr]);
+
+    // Imágenes huérfanas en disco (no referenciadas por ninguna orden activa)
+    try {
+      const files = fs.readdirSync(UPLOADS_DIR);
+      const allEvs = new Set(
+        query('SELECT evidences FROM ordenes WHERE evidences IS NOT NULL AND evidences != ?', ['[]'])
+          .flatMap(r => { try { return JSON.parse(r.evidences); } catch { return []; } })
+          .filter(e => e && e.startsWith('/uploads/'))
+          .map(e => path.basename(e))
+      );
+      for (const f of files) {
+        if (!allEvs.has(f)) {
+          try { fs.unlinkSync(path.join(UPLOADS_DIR, f)); } catch {}
+        }
+      }
+    } catch {}
+
+    if (oldOrders.length > 0) {
+      console.log(`[Cleanup] ${oldOrders.length} órdenes antiguas eliminadas (>${cutoffStr})`);
+    }
+  } catch (e) {
+    console.error('[Cleanup] Error:', e.message);
+  }
+}
+
+function getLocalIPs() {
+  try {
+    const os = require('os');
+    const nets = os.networkInterfaces();
+    const ips = [];
+    for (const iface of Object.values(nets)) {
+      for (const addr of iface) {
+        if (addr.family === 'IPv4' && !addr.internal) ips.push(addr.address);
+      }
+    }
+    return ips;
+  } catch { return []; }
+}
+
 export async function startDBServer(port) {
   await initDB();
 
   const app = express();
   app.use(cors({ origin: '*' }));
-  app.use(express.json({ limit: '20mb' }));
+  app.use(express.json({ limit: '30mb' }));
+
+  // Servir imágenes subidas desde disco
+  app.use('/uploads', express.static(UPLOADS_DIR));
+
+  // ── /php/upload_imagen ────────────────────────────────────────
+  app.post('/php/upload_imagen', (req, res) => {
+    try {
+      const { id, dataUrl } = req.body;
+      if (!id || !dataUrl) return res.status(400).json({ error: 'id y dataUrl requeridos' });
+      const match = dataUrl.match(/^data:image\/(\w+);base64,(.+)$/s);
+      if (!match) return res.status(400).json({ error: 'Formato de imagen inválido' });
+      const ext = match[1] === 'jpeg' ? 'jpg' : (match[1] || 'jpg');
+      const buffer = Buffer.from(match[2], 'base64');
+      const fname = `ord${id}_${Date.now()}.${ext}`;
+      fs.writeFileSync(path.join(UPLOADS_DIR, fname), buffer);
+      res.json({ ok: true, url: `/uploads/${fname}` });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
 
   // ── /api/sync ─────────────────────────────────────────────────
   app.get(['/api/sync.php', '/api/sync'], (req, res) => {
@@ -785,6 +876,19 @@ export async function startDBServer(port) {
         return res.json(parseRow(resource, row[0] || {}));
       }
       if (action === 'eliminar') {
+        // Al eliminar una orden, borrar imágenes del disco
+        if (resource === 'ordenes') {
+          const ord = query('SELECT evidences FROM ordenes WHERE id=?', [data.id])[0];
+          if (ord) {
+            let evs = [];
+            try { evs = JSON.parse(ord.evidences || '[]'); } catch {}
+            for (const ev of evs) {
+              if (ev && !ev.startsWith('data:') && ev.startsWith('/uploads/')) {
+                try { fs.unlinkSync(path.join(UPLOADS_DIR, path.basename(ev))); } catch {}
+              }
+            }
+          }
+        }
         exec(`DELETE FROM ${resource} WHERE id=?`, [data.id]);
         return res.json({ ok: true });
       }
@@ -872,6 +976,39 @@ export async function startDBServer(port) {
           const services = JSON.parse(orden.services || '[]');
           services.splice(data.idx, 1);
           exec('UPDATE ordenes SET services=? WHERE id=?', [JSON.stringify(services), data.id]);
+          return res.json({ ok: true });
+        }
+        if (action === 'agregar_evidencia') {
+          const orden = query('SELECT evidences FROM ordenes WHERE id=?', [data.id])[0];
+          if (!orden) return res.status(404).json({ error: 'Orden no encontrada' });
+          const evidences = JSON.parse(orden.evidences || '[]');
+          let url = data.url;
+          if (!url && data.dataUrl) {
+            const match = data.dataUrl.match(/^data:image\/(\w+);base64,(.+)$/s);
+            if (match) {
+              const ext = match[1] === 'jpeg' ? 'jpg' : (match[1] || 'jpg');
+              const buffer = Buffer.from(match[2], 'base64');
+              const fname = `ord${data.id}_${Date.now()}.${ext}`;
+              fs.writeFileSync(path.join(UPLOADS_DIR, fname), buffer);
+              url = `/uploads/${fname}`;
+            }
+          }
+          if (!url) return res.status(400).json({ error: 'Imagen requerida' });
+          evidences.push(url);
+          exec('UPDATE ordenes SET evidences=? WHERE id=?', [JSON.stringify(evidences), data.id]);
+          return res.json({ ok: true, url });
+        }
+        if (action === 'quitar_evidencia') {
+          const orden = query('SELECT evidences FROM ordenes WHERE id=?', [data.id])[0];
+          if (!orden) return res.status(404).json({ error: 'Orden no encontrada' });
+          const evidences = JSON.parse(orden.evidences || '[]');
+          const idx = parseInt(data.idx);
+          const ev = evidences[idx];
+          if (ev && !ev.startsWith('data:') && ev.startsWith('/uploads/')) {
+            try { fs.unlinkSync(path.join(UPLOADS_DIR, path.basename(ev))); } catch {}
+          }
+          evidences.splice(idx, 1);
+          exec('UPDATE ordenes SET evidences=? WHERE id=?', [JSON.stringify(evidences), data.id]);
           return res.json({ ok: true });
         }
         if (action === 'finalizar') {
@@ -1171,8 +1308,18 @@ export async function startDBServer(port) {
   });
 
   return new Promise((resolve, reject) => {
-    const server = app.listen(port, '127.0.0.1', () => {
+    const server = app.listen(port, '0.0.0.0', () => {
       console.log(`[DB Server] ✓ Iniciado en puerto ${port}`);
+      const ips = getLocalIPs();
+      if (ips.length) {
+        console.log('[DB Server] Acceso desde red local:');
+        ips.forEach(ip => console.log(`  → http://${ip}:${port}`));
+      }
+      // Limpiar registros antiguos al arrancar y luego cada 24h
+      setTimeout(() => {
+        runCleanup();
+        setInterval(runCleanup, 24 * 60 * 60 * 1000);
+      }, 5000);
       resolve(server);
     });
     server.on('error', reject);

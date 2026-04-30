@@ -137,19 +137,37 @@ async function connect() {
       version,
       auth: state,
       logger,
-      browser: ["MotoFlow Pro", "Chrome", "120"],
-      // markOnlineOnConnect:true es clave para que WhatsApp acepte mensajes
-      // del cliente sin marcarlos como "esperando mensaje" en el receptor.
+      browser: ["MotoFlow Pro", "Chrome", "124"],
       markOnlineOnConnect: true,
       syncFullHistory: false,
       generateHighQualityLinkPreview: false,
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
-      // Baileys pide reenviar el mensaje original cuando el receptor falla a descifrar.
-      // Sin este callback, los mensajes quedan en "esperando mensaje" para siempre.
+      // Retorna el mensaje cacheado para que el receptor pueda re-descifrar.
+      // Sin esto los mensajes quedan en "esperando mensaje".
       getMessage: async (key) => {
         const cacheKey = `${key.remoteJid}|${key.id}`;
-        return sentMessageStore.get(cacheKey) || { conversation: '' };
+        const cached = sentMessageStore.get(cacheKey);
+        if (cached) return cached;
+        // Fallback: texto vacío (mejor que undefined)
+        return { conversation: '' };
+      },
+      // Permite que el socket parchee mensajes antes de enviarlos
+      // para mejorar la compatibilidad con sesiones nuevas.
+      patchMessageBeforeSending: (msg) => {
+        const hasButton = !!(
+          msg.buttonsMessage ||
+          msg.templateMessage ||
+          msg.listMessage
+        );
+        if (hasButton) {
+          msg = {
+            viewOnceMessage: {
+              message: { messageContextInfo: { deviceListMetadataVersion: 2 }, ...msg },
+            },
+          };
+        }
+        return msg;
       },
     });
 
@@ -256,14 +274,17 @@ export async function sendMessage(phone, message) {
   const number = String(phone || "").replace(/\D/g, "");
   if (!number) throw new Error("Teléfono inválido");
 
-  // Espera mínima de 2.5s tras "Conectado" para que las pre-keys queden disponibles
-  // del lado del receptor. Sin esto el primer mensaje queda en "esperando mensaje".
-  const waitMs = Math.max(0, 2500 - (Date.now() - connectionReadyAt));
-  if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs));
+  // Esperar al menos 3s tras conectar para que las pre-keys se propaguen.
+  // Esto evita el aviso "este mensaje puede tardar un momento" en sesiones nuevas.
+  const waitMs = Math.max(0, 3000 - (Date.now() - connectionReadyAt));
+  if (waitMs > 0) {
+    logLine(`[WA] Esperando ${waitMs}ms para estabilizar sesión...`);
+    await new Promise(r => setTimeout(r, waitMs));
+  }
 
   const jid = `${number}@s.whatsapp.net`;
 
-  // Verifica que el número exista en WhatsApp (evita enviar al vacío)
+  // Verificar que el número exista en WhatsApp
   try {
     const checked = await sock.onWhatsApp(jid);
     if (Array.isArray(checked) && checked.length && checked[0].exists === false) {
@@ -271,27 +292,30 @@ export async function sendMessage(phone, message) {
     }
   } catch (e) {
     if (e.message?.startsWith('Número no registrado')) throw e;
-    // ignora errores de verificación; intentamos enviar igual
   }
 
-  // Suscribirse al estado del receptor ayuda a forzar el handshake de sesión
+  // Forzar handshake de sesión: suscribirse al presence del receptor
   try { await sock.presenceSubscribe(jid); } catch {}
+  await new Promise(r => setTimeout(r, 300));
+  try { await sock.sendPresenceUpdate('available'); } catch {}
   try { await sock.sendPresenceUpdate('composing', jid); } catch {}
-  await new Promise(r => setTimeout(r, 400));
+  await new Promise(r => setTimeout(r, 500));
   try { await sock.sendPresenceUpdate('paused', jid); } catch {}
 
+  // Enviar como mensaje de texto plano para máxima compatibilidad
   const result = await sock.sendMessage(jid, { text: message });
 
-  // Cachea el contenido para que getMessage pueda reenviarlo si el receptor pide retry.
+  // Cachear para que getMessage pueda reenviar si el receptor pide retry
   if (result?.key?.id) {
     const cacheKey = `${jid}|${result.key.id}`;
     sentMessageStore.set(cacheKey, { conversation: message });
-    // Limita el caché a las últimas 200 entradas
-    if (sentMessageStore.size > 200) {
+    if (sentMessageStore.size > 300) {
       const firstKey = sentMessageStore.keys().next().value;
       sentMessageStore.delete(firstKey);
     }
   }
+
+  logLine(`[WA] ✓ Mensaje enviado a ${jid}`);
   return result;
 }
 

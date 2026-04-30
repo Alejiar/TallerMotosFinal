@@ -25,6 +25,14 @@ async function get(archivo, accion, params = '') {
   return r.json();
 }
 
+// ─── Sidebar mobile toggle ───────────────────
+function toggleSidebar() {
+  document.getElementById('app').classList.toggle('sidebar-open');
+}
+function closeSidebar() {
+  document.getElementById('app').classList.remove('sidebar-open');
+}
+
 // ─── Toast ───────────────────────────────────
 function toast(msg, type = 'info') {
   const c = document.getElementById('toast-container');
@@ -106,6 +114,7 @@ function showPage(page) {
     a.classList.toggle('active', a.dataset.page === page);
   });
   document.getElementById('topbar-title').textContent = PAGE_TITLES[page] || page;
+  closeSidebar(); // cierra sidebar en móvil tras navegar
   const loaders = { dashboard: loadDashboard, motos: loadMotos, ordenes: loadOrdenes,
     inventario: loadInventario, ventas: loadVentas, facturas: loadFacturas,
     proveedores: loadProveedores, compras: loadCompras, empleados: loadEmpleados,
@@ -512,7 +521,10 @@ function renderOrdenDetalle(d) {
     <div class="card mb-4">
       <div class="flex justify-between items-center mb-3">
         <h3>Evidencias</h3>
-        ${!locked ? `<label class="btn btn-outline btn-sm" style="cursor:pointer">📷 Agregar fotos<input type="file" accept="image/*" multiple hidden onchange="agregarFotos(${d.id},this)"></label>` : ''}
+        ${!locked ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
+          <label class="btn btn-outline btn-sm" style="cursor:pointer">📷 Galería<input type="file" accept="image/*" multiple hidden onchange="agregarFotos(${d.id},this)"></label>
+          <label class="btn btn-outline btn-sm" style="cursor:pointer">📸 Cámara<input type="file" accept="image/*" capture="environment" hidden onchange="agregarFotos(${d.id},this)"></label>
+        </div>` : ''}
       </div>
       <div class="evidences-grid" id="od-evidences">
         ${d.evidences.length === 0 ? '<p class="text-muted text-sm">Sin fotos.</p>' :
@@ -594,11 +606,34 @@ async function quitarServicio(orderId, idx) {
   openOrdenDetalle(orderId);
 }
 
+async function compressImage(file, maxWidth = 1280, quality = 0.78) {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => resolve(e.target.result);
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 async function agregarFotos(orderId, input) {
   const files = Array.from(input.files);
+  if (!files.length) return;
+  toast('Subiendo ' + files.length + ' imagen(es)…');
   for (const f of files) {
-    const dataUrl = await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(f); });
-    await api('ordenes', 'agregar_evidencia', { id: orderId, dataUrl });
+    const dataUrl = await compressImage(f);
+    const r = await api('ordenes', 'agregar_evidencia', { id: orderId, dataUrl });
+    if (r.error) { toast(r.error, 'error'); }
   }
   openOrdenDetalle(orderId);
 }

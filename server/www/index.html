@@ -28,6 +28,8 @@
 
 <!-- APP -->
 <div id="app" class="hidden">
+  <!-- Overlay para cerrar sidebar en móvil -->
+  <div id="sidebar-overlay" onclick="closeSidebar()"></div>
   <aside id="sidebar">
     <div class="logo" id="sidebar-logo">🏍️ MotoFlow <span>Pro</span></div>
     <nav id="nav">
@@ -59,8 +61,11 @@
 
   <div id="content-wrapper">
     <div id="topbar">
-      <div class="topbar-title" id="topbar-title">Dashboard</div>
-      <div style="display:flex;align-items:center;gap:14px">
+      <div style="display:flex;align-items:center">
+        <button id="mobile-menu-btn" onclick="toggleSidebar()" title="Menú">☰</button>
+        <div class="topbar-title" id="topbar-title">Dashboard</div>
+      </div>
+      <div class="topbar-right" style="display:flex;align-items:center;gap:14px">
         <div class="alert-bell" id="stock-alert-bell">
           <button class="alert-bell-btn" onclick="toggleStockAlert()" title="Alertas de inventario">
             🔔<span class="alert-bell-badge hidden" id="stock-alert-count">0</span>
