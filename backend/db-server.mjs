@@ -210,6 +210,49 @@ function ensureSchema() {
     for (const [key, label, body] of tpls) {
       db.run("INSERT OR IGNORE INTO templates(key,label,body) VALUES(?,?,?)", [key, label, body]);
     }
+    const configSeeds = [
+      ['nit', ''],
+      ['telefono', ''],
+      ['direccion', ''],
+      ['pie_recibo_orden', 'Gracias por su visita'],
+      ['pie_recibo_venta', 'Gracias por su compra'],
+      ['encabezado_orden', ''],
+      ['encabezado_venta', ''],
+      ['pie_recibo_custom', 'Gracias por su preferencia'],
+    ];
+    for (const [k, v] of configSeeds) {
+      db.run("INSERT OR IGNORE INTO configuracion(clave,valor) VALUES(?,?)", [k, v]);
+    }
+    // Tabla de recibos personalizados
+    db.run(`CREATE TABLE IF NOT EXISTS recibos_custom (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      number TEXT NOT NULL UNIQUE,
+      cliente TEXT,
+      descripcion TEXT,
+      valor REAL NOT NULL DEFAULT 0,
+      fecha TEXT NOT NULL,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    )`);
+    db.run("INSERT OR IGNORE INTO counters(key,value) VALUES('receipt',0)");
+    // Columnas legacy (pueden existir o no)
+    try { db.run("ALTER TABLE empleados ADD COLUMN documento TEXT"); } catch {}
+    try { db.run("ALTER TABLE empleados ADD COLUMN porcentaje REAL NOT NULL DEFAULT 0"); } catch {}
+    try { db.run("ALTER TABLE pagos_empleados ADD COLUMN orderId INTEGER"); } catch {}
+    try { db.run("ALTER TABLE pagos_empleados ADD COLUMN total_orden REAL"); } catch {}
+    try { db.run("ALTER TABLE pagos_empleados ADD COLUMN porcentaje REAL"); } catch {}
+    try { db.run("ALTER TABLE pagos_empleados ADD COLUMN estado TEXT NOT NULL DEFAULT 'pendiente'"); } catch {}
+    // Tabla de liquidaciones (pago final acumulado)
+    db.run(`CREATE TABLE IF NOT EXISTS liquidaciones_empleados (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      employeeId INTEGER NOT NULL,
+      total REAL NOT NULL DEFAULT 0,
+      date TEXT NOT NULL,
+      note TEXT,
+      items TEXT NOT NULL DEFAULT '[]',
+      createdAt TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY(employeeId) REFERENCES empleados(id) ON DELETE CASCADE
+    )`);
+    try { db.run("ALTER TABLE pagos_empleados ADD COLUMN liquidacion_id INTEGER"); } catch {}
     saveDB();
   } catch (e) { console.error('[DB] ensureSchema:', e.message); }
 }
@@ -475,6 +518,172 @@ export async function startDBServer(port) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  // ── /php/ajustes ──────────────────────────────────────────────
+  app.all('/php/ajustes', (req, res) => {
+    try {
+      const action = req.query.action || req.body?.action || '';
+      const data = { ...(req.body || {}), ...(req.query || {}) };
+      if (action === 'config_get') {
+        const rows = query('SELECT clave, valor FROM configuracion');
+        const cfg = {};
+        rows.forEach(r => { cfg[r.clave] = r.valor; });
+        return res.json(cfg);
+      }
+      if (action === 'config_set') {
+        for (const [k, v] of Object.entries(data)) {
+          if (k === 'action') continue;
+          exec('INSERT OR REPLACE INTO configuracion(clave,valor) VALUES(?,?)', [k, String(v)]);
+        }
+        return res.json({ ok: true });
+      }
+      res.status(400).json({ error: 'Acción no soportada' });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── /php/recibos (recibos personalizados CRUD) ────────────────
+  app.all('/php/recibos', (req, res) => {
+    try {
+      const action = req.query.action || req.body?.action || '';
+      const data = { ...(req.body || {}), ...(req.query || {}) };
+      delete data.action;
+      if (action === 'listar') {
+        return res.json(query('SELECT * FROM recibos_custom ORDER BY id DESC'));
+      }
+      if (action === 'crear') {
+        if (!data.descripcion || !data.valor) return res.status(400).json({ error: 'Descripción y valor requeridos' });
+        const n = query("SELECT value FROM counters WHERE key='receipt'")[0]?.value || 0;
+        exec("INSERT OR IGNORE INTO counters(key,value) VALUES('receipt',0)");
+        exec("UPDATE counters SET value=value+1 WHERE key='receipt'");
+        const number = 'REC-' + String(parseInt(n) + 1).padStart(4, '0');
+        exec(`INSERT INTO recibos_custom (number, cliente, descripcion, valor, fecha) VALUES (?,?,?,?,?)`,
+          [number, data.cliente || '', data.descripcion, Number(data.valor), data.fecha || todayISO()]);
+        const row = query('SELECT * FROM recibos_custom WHERE id=?', [lastId()])[0];
+        return res.status(201).json(row);
+      }
+      if (action === 'eliminar') {
+        exec('DELETE FROM recibos_custom WHERE id=?', [data.id]);
+        return res.json({ ok: true });
+      }
+      res.status(400).json({ error: 'Acción no soportada' });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── /php/recibo ───────────────────────────────────────────────
+  app.get('/php/recibo', (req, res) => {
+    try {
+      const { tipo, id } = req.query;
+      if (!tipo || !id) return res.status(400).send('<p>Parámetros requeridos: tipo, id</p>');
+
+      const cfgRows = query('SELECT clave, valor FROM configuracion');
+      const cfg = {};
+      cfgRows.forEach(r => { cfg[r.clave] = r.valor || ''; });
+
+      const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const fmt = n => '$' + Number(n || 0).toLocaleString('es-CO');
+      const fmtDate = d => { if (!d) return '-'; const p = String(d).split('T')[0].split('-'); return `${p[2]}/${p[1]}/${p[0]}`; };
+
+      const css = `<style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{width:58mm;font-family:monospace;font-size:11px;padding:3mm}
+        .center{text-align:center}
+        .bold{font-weight:bold}
+        .sep{border-top:1px dashed #000;margin:5px 0}
+        .row{display:flex;justify-content:space-between;gap:4px;margin:2px 0}
+        .total-row{display:flex;justify-content:space-between;font-size:14px;font-weight:bold;margin:4px 0}
+        .header{text-align:center;margin-bottom:6px}
+        .header h2{font-size:13px}
+        .footer{text-align:center;margin-top:6px;font-size:10px}
+        .item-name{flex:1}
+        @media print{body{margin:0}}
+      </style>`;
+
+      const header = (extra = '') => `
+        <div class="header">
+          <h2 class="bold">${esc(cfg.nombre_taller || 'TALLER')}</h2>
+          ${cfg.nit ? `<div>NIT: ${esc(cfg.nit)}</div>` : ''}
+          ${cfg.telefono ? `<div>TEL: ${esc(cfg.telefono)}</div>` : ''}
+          ${cfg.direccion ? `<div>${esc(cfg.direccion)}</div>` : ''}
+        </div>
+        ${extra}
+      `;
+
+      if (tipo === 'venta') {
+        const v = query(
+          `SELECT v.*, o.number as orden_number FROM ventas v
+           LEFT JOIN ordenes o ON o.id=v.orderId WHERE v.id=?`, [id])[0];
+        if (!v) return res.status(404).send('<p>Venta no encontrada</p>');
+        const items = (() => { try { return JSON.parse(v.items || '[]'); } catch { return []; } })();
+        const metodoPago = { efectivo: 'Efectivo', transferencia: 'Transferencia', tarjeta: 'Tarjeta' }[v.method] || v.method;
+        const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">${css}</head><body>
+          ${header(`<div>Fecha: ${fmtDate(v.date)}</div><div class="bold">Factura #: ${esc(v.number)}</div>`)}
+          <div class="sep"></div>
+          ${items.map(it => `
+            <div class="row"><span class="item-name">${esc(it.name || it.description || '')}</span></div>
+            <div class="row"><span>${Number(it.qty||1)} x ${fmt(it.unitPrice || it.price || 0)}</span><span>${fmt((it.qty||1)*(it.unitPrice||it.price||0))}</span></div>
+          `).join('')}
+          <div class="sep"></div>
+          <div class="total-row"><span>TOTAL:</span><span>${fmt(v.total)}</span></div>
+          <div class="row"><span>Pago: ${esc(metodoPago)}</span></div>
+          <div class="sep"></div>
+          <div class="footer">${esc(cfg.pie_recibo_venta || 'Gracias por su compra')}</div>
+          <script>window.onload=function(){window.print();}<\/script>
+        </body></html>`;
+        return res.send(html);
+      }
+
+      if (tipo === 'orden') {
+        const o = query(
+          `SELECT o.*, c.name as cliente_name, m.plate, m.model, m.year
+           FROM ordenes o
+           LEFT JOIN clientes c ON c.id=o.customerId
+           LEFT JOIN motos m ON m.id=o.bikeId WHERE o.id=?`, [id])[0];
+        if (!o) return res.status(404).send('<p>Orden no encontrada</p>');
+        const parts = (() => { try { return JSON.parse(o.parts || '[]'); } catch { return []; } })();
+        const services = (() => { try { return JSON.parse(o.services || '[]'); } catch { return []; } })();
+        const totalPartes = parts.reduce((s, p) => s + (Number(p.price||0) * Number(p.qty||1)), 0);
+        const totalServicios = services.reduce((s, sv) => s + Number(sv.price||0), 0);
+        const total = Number(o.total) || totalPartes + totalServicios;
+        const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">${css}</head><body>
+          ${header(`<div>Fecha: ${fmtDate(o.entryDate)}</div><div class="bold">Orden #: ${esc(o.number)}</div>`)}
+          <div class="sep"></div>
+          <div class="row"><span>Placa:</span><span class="bold">${esc(o.plate)}</span></div>
+          <div class="row"><span>Cliente:</span><span>${esc(o.cliente_name)}</span></div>
+          <div class="sep"></div>
+          ${parts.length ? `<div class="bold">Repuestos</div>
+            ${parts.map(p => `<div class="row"><span class="item-name">${esc(p.name)}</span><span>${fmt(Number(p.price||0)*Number(p.qty||1))}</span></div>`).join('')}` : ''}
+          ${services.length ? `<div class="bold" style="margin-top:4px">Mano de obra</div>
+            ${services.map(s => `<div class="row"><span class="item-name">${esc(s.description)}</span><span>${fmt(s.price)}</span></div>`).join('')}` : ''}
+          <div class="sep"></div>
+          <div class="total-row"><span>TOTAL:</span><span>${fmt(total)}</span></div>
+          <div class="sep"></div>
+          <div class="footer">${esc(cfg.pie_recibo_orden || 'Gracias por su visita')}</div>
+          <script>window.onload=function(){window.print();}<\/script>
+        </body></html>`;
+        return res.send(html);
+      }
+
+      if (tipo === 'custom') {
+        const r = query('SELECT * FROM recibos_custom WHERE id=?', [id])[0];
+        if (!r) return res.status(404).send('<p>Recibo no encontrado</p>');
+        const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">${css}</head><body>
+          ${header(`<div>Fecha: ${fmtDate(r.fecha)}</div><div class="bold">Recibo #: ${esc(r.number)}</div>`)}
+          <div class="sep"></div>
+          ${r.cliente ? `<div class="row"><span>A nombre de:</span><span class="bold">${esc(r.cliente)}</span></div><div class="sep"></div>` : ''}
+          <div class="bold" style="margin-bottom:4px">Descripción:</div>
+          <div style="font-size:11px;margin-bottom:6px">${esc(r.descripcion)}</div>
+          <div class="sep"></div>
+          <div class="total-row"><span>TOTAL:</span><span>${fmt(r.valor)}</span></div>
+          <div class="sep"></div>
+          <div class="footer">${esc(cfg.pie_recibo_custom || 'Gracias por su preferencia')}</div>
+          <script>window.onload=function(){window.print();}<\/script>
+        </body></html>`;
+        return res.send(html);
+      }
+
+      res.status(400).send('<p>tipo debe ser "venta", "orden" o "custom"</p>');
+    } catch (e) { res.status(500).send(`<p>Error: ${e.message}</p>`); }
+  });
+
   // ── Generic /php/:resource handler ───────────────────────────
   app.all('/php/:resource', (req, res) => {
     try {
@@ -516,10 +725,27 @@ export async function startDBServer(port) {
         }
         return res.json(query(`SELECT * FROM ${resource}`).map(r => parseRow(resource, r)));
       }
-      if (action === 'get') {
+      if (action === 'get' && resource === 'ordenes') {
         const row = query(`SELECT o.*, c.name as cliente_name, c.phone as cliente_phone, m.plate, m.model, m.year, m.color, m.year FROM ordenes o LEFT JOIN clientes c ON c.id=o.customerId LEFT JOIN motos m ON m.id=o.bikeId WHERE o.id=?`, [data.id])[0];
         if (!row) return res.status(404).json({ error: 'Orden no encontrada' });
         return res.json(parseRow('ordenes', row));
+      }
+      // Stock bajo — productos activos cuyo stock está en o bajo el mínimo
+      if (resource === 'productos' && action === 'stock_bajo') {
+        const rows = query(
+          `SELECT id, code, name, stock, minStock, shelf FROM productos
+           WHERE active=1 AND minStock > 0 AND stock <= minStock
+           ORDER BY (stock - minStock) ASC, name`);
+        return res.json(rows);
+      }
+      // Búsqueda especializada de productos/inventario (filtra active=1, incluye stock)
+      if (resource === 'productos' && action === 'buscar') {
+        const q = `%${(data.q || '').toLowerCase()}%`;
+        const rows = query(
+          `SELECT id, code, name, price, cost, stock, minStock, shelf FROM productos
+           WHERE active=1 AND (LOWER(name) LIKE ? OR LOWER(code) LIKE ?)
+           ORDER BY name LIMIT 20`, [q, q]);
+        return res.json(rows);
       }
       if (action === 'buscar') {
         const q = `%${(data.q || '').toLowerCase()}%`;
@@ -573,10 +799,9 @@ export async function startDBServer(port) {
         if (action === 'crear') {
           // Composite: cliente + moto + orden from quick-create form
           const { nombre, telefono, placa, problema } = data;
-          // Find or create cliente
+          // Find or create cliente — busca coincidencia exacta nombre+teléfono para no mezclar clientes
           const now = new Date().toISOString();
-          let cliente = query('SELECT * FROM clientes WHERE LOWER(phone)=LOWER(?)', [telefono])[0]
-            || query('SELECT * FROM clientes WHERE LOWER(name)=LOWER(?)', [nombre])[0];
+          let cliente = query('SELECT * FROM clientes WHERE LOWER(name)=LOWER(?) AND phone=?', [nombre, telefono])[0];
           if (!cliente) {
             exec('INSERT INTO clientes (name, phone, active, createdAt) VALUES (?,?,1,?)', [nombre, telefono, now]);
             cliente = query('SELECT * FROM clientes WHERE id=?', [lastId()])[0];
@@ -602,18 +827,37 @@ export async function startDBServer(port) {
           const orden = query('SELECT * FROM ordenes WHERE id=?', [data.id])[0];
           if (!orden) return res.status(404).json({ error: 'Orden no encontrada' });
           const prod = query('SELECT * FROM productos WHERE id=?', [data.productId])[0];
+          if (!prod) return res.status(404).json({ error: 'Producto no encontrado' });
+          if (prod.stock <= 0) return res.status(400).json({ error: `Sin stock: ${prod.name}` });
           const parts = JSON.parse(orden.parts || '[]');
           parts.push({ productId: prod.id, name: prod.name, price: prod.price, qty: 1 });
           exec('UPDATE ordenes SET parts=? WHERE id=?', [JSON.stringify(parts), data.id]);
-          exec('UPDATE productos SET stock=stock-1 WHERE id=?', [data.productId]);
-          return res.json({ ok: true });
+          // Stock se descuenta al FINALIZAR, no al agregar
+          return res.json({ ok: true, stock: prod.stock });
         }
         if (action === 'quitar_parte') {
           const orden = query('SELECT * FROM ordenes WHERE id=?', [data.id])[0];
           const parts = JSON.parse(orden.parts || '[]');
-          const removed = parts.splice(data.idx, 1)[0];
+          parts.splice(data.idx, 1);
           exec('UPDATE ordenes SET parts=? WHERE id=?', [JSON.stringify(parts), data.id]);
-          if (removed) exec('UPDATE productos SET stock=stock+? WHERE id=?', [removed.qty || 1, removed.productId]);
+          // No restaurar stock (no se descontó al agregar)
+          return res.json({ ok: true });
+        }
+        if (action === 'actualizar_qty') {
+          const orden = query('SELECT parts FROM ordenes WHERE id=?', [data.id])[0];
+          const parts = JSON.parse(orden?.parts || '[]');
+          const idx = parseInt(data.idx);
+          if (parts[idx] !== undefined) {
+            const newQty = Number(data.qty) || 1;
+            if (parts[idx].productId) {
+              const prod = query('SELECT stock FROM productos WHERE id=?', [parts[idx].productId])[0];
+              if (prod && newQty > prod.stock) {
+                return res.status(400).json({ error: `Stock insuficiente. Disponible: ${prod.stock}` });
+              }
+            }
+            parts[idx].qty = newQty;
+          }
+          exec('UPDATE ordenes SET parts=? WHERE id=?', [JSON.stringify(parts), data.id]);
           return res.json({ ok: true });
         }
         if (action === 'agregar_servicio') {
@@ -637,6 +881,12 @@ export async function startDBServer(port) {
           const services = JSON.parse(orden.services || '[]');
           const total = parts.reduce((s, p) => s + (p.price * (p.qty || 1)), 0) + services.reduce((s, sv) => s + sv.price, 0);
           const fromStatus = orden.status;
+          // Descontar stock del inventario al finalizar
+          for (const p of parts) {
+            if (p.productId) {
+              exec('UPDATE productos SET stock=MAX(0, stock-?) WHERE id=?', [Number(p.qty) || 1, p.productId]);
+            }
+          }
           exec("UPDATE ordenes SET status='lista', total=? WHERE id=?", [total, data.id]);
           notifyOrden(data.id, 'lista', fromStatus);
           return res.json({ ok: true, total });
@@ -668,12 +918,32 @@ export async function startDBServer(port) {
           // Movimiento de caja
           exec(`INSERT INTO caja (date, type, amount, concept, refType, refId) VALUES (?,?,?,?,?,?)`,
             [todayISO(), 'ingreso', total, `Venta ${number} (orden ${orden.number})`, 'venta', ventaId]);
+          // Acumular pago al empleado (sin caja inmediata — se liquida después)
+          if (data.empleadoId) {
+            const pct = Number(data.porcentaje) || 0;
+            const valorEmp = pct > 0 ? Math.round(total * pct / 100) : 0;
+            exec(`INSERT INTO pagos_empleados (employeeId, amount, date, note, orderId, total_orden, porcentaje, estado)
+                  VALUES (?,?,?,?,?,?,?,?)`,
+              [parseInt(data.empleadoId), valorEmp, todayISO(),
+               `Orden ${orden.number}`, data.id, total, pct, 'pendiente']);
+          }
           notifyOrden(data.id, 'entregada', fromStatus);
           return res.json({ ok: true, total, ventaNumber: number });
         }
       }
 
       // ── Ventas (mostrador) ─────────────────────────────────────
+      if (resource === 'ventas' && action === 'get') {
+        const v = query(
+          `SELECT v.*, o.number as orden_number, c.name as cliente_name, m.plate
+           FROM ventas v
+           LEFT JOIN ordenes o ON o.id=v.orderId
+           LEFT JOIN clientes c ON c.id=o.customerId
+           LEFT JOIN motos m ON m.id=o.bikeId
+           WHERE v.id=?`, [data.id])[0];
+        if (!v) return res.status(404).json({ error: 'Venta no encontrada' });
+        return res.json({ ...v, items: (() => { try { return JSON.parse(v.items || '[]'); } catch { return []; } })() });
+      }
       if (resource === 'ventas' && action === 'crear') {
         const items = data.items || [];
         const total = Number(data.total) || items.reduce((s, it) => s + Number(it.unitPrice || it.price || 0) * Number(it.qty || 1), 0);
@@ -754,25 +1024,105 @@ export async function startDBServer(port) {
       // ── Empleados pagos ────────────────────────────────────────
       if (resource === 'empleados' && action === 'pagos_crear') {
         const date = data.date || todayISO();
-        const amount = Number(data.amount) || 0;
-        exec('INSERT INTO pagos_empleados (employeeId, amount, date, note) VALUES (?,?,?,?)',
-          [data.employeeId, amount, date, data.note || '']);
+        const valorBase = Number(data.total_orden) || 0;
+        const pct = Number(data.porcentaje) || 0;
+        const amount = Math.round(valorBase * pct / 100);
+        const orderId = data.orderId ? parseInt(data.orderId) : null;
+        if (!data.employeeId) return res.status(400).json({ error: 'Empleado requerido' });
+        if (!valorBase) return res.status(400).json({ error: 'Valor base requerido' });
+        exec(`INSERT INTO pagos_empleados (employeeId, amount, date, note, orderId, total_orden, porcentaje, estado)
+              VALUES (?,?,?,?,?,?,?,?)`,
+          [parseInt(data.employeeId), amount, date, data.note || '', orderId, valorBase, pct, 'pendiente']);
         const id = lastId();
-        if (amount > 0) {
-          const emp = query('SELECT name FROM empleados WHERE id=?', [data.employeeId])[0];
-          exec(`INSERT INTO caja (date, type, amount, concept, refType, refId) VALUES (?,?,?,?,?,?)`,
-            [date, 'egreso', amount, `Pago a ${emp?.name || 'empleado'}`, 'pago_empleado', id]);
+        // Sin caja inmediata — el egreso se registra al liquidar
+        return res.json({ ok: true, id, amount });
+      }
+      if (resource === 'empleados' && action === 'acumulados') {
+        const rows = query(`
+          SELECT e.id, e.name, e.role, e.phone,
+                 COALESCE(SUM(CASE WHEN p.estado='pendiente' THEN p.amount ELSE 0 END), 0) as acumulado,
+                 COUNT(CASE WHEN p.estado='pendiente' THEN 1 END) as trabajos_pendientes
+          FROM empleados e
+          LEFT JOIN pagos_empleados p ON p.employeeId=e.id
+          WHERE e.active=1
+          GROUP BY e.id
+          ORDER BY e.name`);
+        return res.json(rows);
+      }
+      if (resource === 'empleados' && action === 'pendientes') {
+        const empId = parseInt(data.employeeId || data.id);
+        if (!empId) return res.status(400).json({ error: 'Empleado requerido' });
+        const rows = query(`
+          SELECT p.*, o.number as orden_number
+          FROM pagos_empleados p
+          LEFT JOIN ordenes o ON o.id=p.orderId
+          WHERE p.employeeId=? AND p.estado='pendiente'
+          ORDER BY p.id DESC`, [empId]);
+        return res.json(rows);
+      }
+      if (resource === 'empleados' && action === 'liquidar') {
+        const empId = parseInt(data.employeeId);
+        if (!empId) return res.status(400).json({ error: 'Empleado requerido' });
+        const pendientes = query(`
+          SELECT p.*, o.number as orden_number
+          FROM pagos_empleados p LEFT JOIN ordenes o ON o.id=p.orderId
+          WHERE p.employeeId=? AND p.estado='pendiente'`, [empId]);
+        if (!pendientes.length) return res.status(400).json({ error: 'No hay trabajos pendientes para liquidar' });
+        const total = pendientes.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+        const date = data.date || todayISO();
+        const items = JSON.stringify(pendientes.map(p => ({
+          id: p.id, orden_number: p.orden_number || null,
+          total_orden: p.total_orden, porcentaje: p.porcentaje, amount: p.amount, date: p.date, note: p.note
+        })));
+        exec(`INSERT INTO liquidaciones_empleados (employeeId, total, date, items) VALUES (?,?,?,?)`,
+          [empId, total, date, items]);
+        const liqId = lastId();
+        for (const p of pendientes) {
+          exec(`UPDATE pagos_empleados SET estado='pagado', liquidacion_id=? WHERE id=?`, [liqId, p.id]);
         }
-        return res.json({ ok: true, id });
+        if (total > 0) {
+          const emp = query('SELECT name FROM empleados WHERE id=?', [empId])[0];
+          exec(`INSERT INTO caja (date, type, amount, concept, refType, refId) VALUES (?,?,?,?,?,?)`,
+            [date, 'egreso', total,
+             `Liquidación ${emp?.name || 'empleado'} (${pendientes.length} trabajo${pendientes.length !== 1 ? 's' : ''})`,
+             'liquidacion', liqId]);
+        }
+        return res.json({ ok: true, id: liqId, total, count: pendientes.length });
+      }
+      if (resource === 'empleados' && action === 'liquidaciones_listar') {
+        const empId = data.employeeId ? parseInt(data.employeeId) : null;
+        const where = empId ? 'WHERE l.employeeId=?' : '';
+        const params = empId ? [empId] : [];
+        const rows = query(`
+          SELECT l.*, e.name as empleado_name
+          FROM liquidaciones_empleados l
+          LEFT JOIN empleados e ON e.id=l.employeeId
+          ${where} ORDER BY l.id DESC`, params);
+        return res.json(rows.map(r => ({ ...r, items: (() => { try { return JSON.parse(r.items || '[]'); } catch { return []; } })() })));
+      }
+      if (resource === 'empleados' && action === 'liquidacion_detalle') {
+        const liqId = parseInt(data.id);
+        const rows = query(`
+          SELECT p.*, o.number as orden_number
+          FROM pagos_empleados p LEFT JOIN ordenes o ON o.id=p.orderId
+          WHERE p.liquidacion_id=?
+          ORDER BY p.id`, [liqId]);
+        return res.json(rows);
       }
       if (resource === 'empleados' && action === 'pagos_listar') {
         const empId = data.empleado_id || data.employeeId;
         const where = empId ? 'WHERE p.employeeId=?' : '';
         const params = empId ? [empId] : [];
         return res.json(query(
-          `SELECT p.*, e.name as empleado_name FROM pagos_empleados p
-            LEFT JOIN empleados e ON e.id=p.employeeId
-            ${where} ORDER BY p.id DESC`, params));
+          `SELECT p.*, e.name as empleado_name, o.number as orden_number
+             FROM pagos_empleados p
+             LEFT JOIN empleados e ON e.id=p.employeeId
+             LEFT JOIN ordenes o ON o.id=p.orderId
+             ${where} ORDER BY p.id DESC`, params));
+      }
+      if (resource === 'empleados' && action === 'marcar_pagado') {
+        exec("UPDATE pagos_empleados SET estado='pagado' WHERE id=?", [data.id]);
+        return res.json({ ok: true });
       }
 
       // ── Garantías ──────────────────────────────────────────────

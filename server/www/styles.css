@@ -210,3 +210,32 @@ tr:last-child td { border-bottom: none; }
 .spinner { border: 3px solid var(--border); border-top-color: var(--primary); border-radius: 50%; width: 32px; height: 32px; animation: spin 0.7s linear infinite; margin: 20px auto; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (max-width: 900px) { .kanban { grid-template-columns: 1fr; } .order-grid { grid-template-columns: 1fr; } .wa-layout { grid-template-columns: 1fr; } }
+
+/* ─── Visual polish ─── */
+#sidebar nav a.active { border-left: 3px solid var(--primary); padding-left: 13px; }
+#sidebar nav a { transition: background .12s, color .12s; }
+tr:hover td { background: #f1f5ff; }
+.btn { transition: background .12s, box-shadow .12s, opacity .12s; }
+.btn-primary:hover:not(:disabled) { box-shadow: 0 2px 8px rgba(59,130,246,.35); }
+.btn-outline:hover { background: #f1f5ff; border-color: var(--primary); color: var(--primary); }
+input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
+.card { transition: box-shadow .15s; }
+.stat-card:hover { box-shadow: var(--shadow-md); }
+th { background: #f8fafc; }
+.text-primary { color: var(--primary); }
+
+/* ─── Stock Alert Bell ─── */
+.alert-bell { position: relative; }
+.alert-bell-btn { background: none; border: none; cursor: pointer; padding: 5px 8px; border-radius: 6px; font-size: 17px; line-height: 1; position: relative; transition: background .12s; }
+.alert-bell-btn:hover { background: var(--bg); }
+.alert-bell-badge { position: absolute; top: -2px; right: -2px; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 9999px; min-width: 17px; text-align: center; line-height: 15px; }
+.alert-dropdown { position: absolute; top: calc(100% + 6px); right: 0; width: 290px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-md); z-index: 400; overflow: hidden; }
+.alert-drop-header { padding: 9px 14px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); border-bottom: 1px solid var(--border); background: #fef3c7; color: #92400e; }
+.alert-drop-item { padding: 9px 14px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; cursor: pointer; transition: background .1s; }
+.alert-drop-item:hover { background: var(--bg); }
+.alert-drop-item:last-child { border-bottom: none; }
+.alert-drop-name { font-weight: 600; font-size: 13px; }
+.alert-drop-stock { font-size: 12px; color: var(--danger); font-weight: 700; white-space: nowrap; }
+.alert-drop-empty { padding: 18px; text-align: center; font-size: 13px; color: var(--text-muted); }
+.alert-drop-footer { padding: 8px 14px; font-size: 12px; color: var(--primary); font-weight: 600; cursor: pointer; text-align: center; border-top: 1px solid var(--border); transition: background .1s; }
+.alert-drop-footer:hover { background: var(--bg); }

@@ -29,7 +29,7 @@
 <!-- APP -->
 <div id="app" class="hidden">
   <aside id="sidebar">
-    <div class="logo">🏍️ MotoFlow <span>Pro</span></div>
+    <div class="logo" id="sidebar-logo">🏍️ MotoFlow <span>Pro</span></div>
     <nav id="nav">
       <div class="nav-section">Taller</div>
       <a href="#" data-page="dashboard" class="active"><span>📊</span> Dashboard</a>
@@ -51,6 +51,8 @@
       <a href="#" data-page="mensajes"><span>✉️</span> Plantillas</a>
       <a href="#" data-page="buscar"><span>🔍</span> Búsqueda</a>
       <div class="nav-section"></div>
+      <a href="#" data-page="recibos"><span>🧾</span> Crear recibos</a>
+      <a href="#" data-page="ajustes"><span>⚙️</span> Ajustes</a>
       <a href="#" onclick="doLogout()"><span>🚪</span> Cerrar sesión</a>
     </nav>
   </aside>
@@ -58,7 +60,19 @@
   <div id="content-wrapper">
     <div id="topbar">
       <div class="topbar-title" id="topbar-title">Dashboard</div>
-      <div class="user-info" id="topbar-user"></div>
+      <div style="display:flex;align-items:center;gap:14px">
+        <div class="alert-bell" id="stock-alert-bell">
+          <button class="alert-bell-btn" onclick="toggleStockAlert()" title="Alertas de inventario">
+            🔔<span class="alert-bell-badge hidden" id="stock-alert-count">0</span>
+          </button>
+          <div class="alert-dropdown hidden" id="stock-alert-dropdown">
+            <div class="alert-drop-header">⚠️ Stock bajo</div>
+            <div id="stock-alert-list"><div class="alert-drop-empty">Sin alertas</div></div>
+            <div class="alert-drop-footer" onclick="showPage('inventario');closeStockAlert()">Ver inventario →</div>
+          </div>
+        </div>
+        <div class="user-info" id="topbar-user"></div>
+      </div>
     </div>
     <div id="content">
 
@@ -137,7 +151,7 @@
           <div class="card">
             <h3>Últimas ventas</h3>
             <div class="table-wrap"><table>
-              <thead><tr><th>N°</th><th>Fecha</th><th>Total</th><th>Método</th></tr></thead>
+              <thead><tr><th>N°</th><th>Fecha</th><th>Total</th><th>Método</th><th></th></tr></thead>
               <tbody id="ventas-tbody"></tbody>
             </table></div>
           </div>
@@ -146,9 +160,9 @@
 
       <!-- FACTURAS -->
       <div class="pg" id="pg-facturas">
-        <div class="pg-header"><div><h1>Facturas</h1></div></div>
+        <div class="pg-header"><div><h1>Facturas</h1><p>Historial completo de ventas y órdenes facturadas.</p></div></div>
         <div class="card"><div class="table-wrap"><table>
-          <thead><tr><th>N°</th><th>Fecha</th><th>Tipo</th><th>Orden</th><th>Total</th><th>Método</th></tr></thead>
+          <thead><tr><th>N°</th><th>Fecha</th><th>Tipo</th><th>Orden</th><th>Total</th><th>Método</th><th></th></tr></thead>
           <tbody id="facturas-tbody"></tbody>
         </table></div></div>
       </div>
@@ -173,23 +187,23 @@
 
       <!-- EMPLEADOS -->
       <div class="pg" id="pg-empleados">
-        <div class="pg-header"><div><h1>Empleados</h1></div><button class="btn btn-primary" onclick="openModalEmpleado()">+ Agregar</button></div>
-        <div class="grid-2" style="align-items:start">
-          <div class="card"><div class="table-wrap"><table>
-            <thead><tr><th>Nombre</th><th>Cargo</th><th>Teléfono</th><th>Acciones</th></tr></thead>
-            <tbody id="emp-tbody"></tbody>
-          </table></div></div>
-          <div class="card">
-            <h3>Pagos recientes</h3>
-            <div class="flex gap-2 mb-3">
-              <select id="emp-pago-select" style="flex:1"><option value="">-- Seleccionar empleado --</option></select>
-              <button class="btn btn-primary btn-sm" onclick="openModalPago()">+ Pago</button>
-            </div>
-            <div class="table-wrap"><table>
-              <thead><tr><th>Empleado</th><th>Monto</th><th>Fecha</th><th>Nota</th></tr></thead>
-              <tbody id="pagos-tbody"></tbody>
-            </table></div>
+        <div class="pg-header">
+          <div><h1>Empleados</h1><p class="text-muted text-sm">Los trabajos se acumulan y se liquidan al presionar "Pagar"</p></div>
+          <div class="flex gap-2">
+            <button class="btn btn-outline" onclick="openModalPago()">+ Registrar trabajo</button>
+            <button class="btn btn-primary" onclick="openModalEmpleado()">+ Empleado</button>
           </div>
+        </div>
+        <div class="card mb-3"><div class="table-wrap"><table>
+          <thead><tr><th>Nombre</th><th>Cargo</th><th>Teléfono</th><th>Acumulado</th><th>Trabajos</th><th>Acciones</th></tr></thead>
+          <tbody id="emp-tbody"></tbody>
+        </table></div></div>
+        <div class="card">
+          <h3 style="margin-bottom:12px">Historial de liquidaciones</h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Empleado</th><th>Total pagado</th><th>Trabajos</th><th>Fecha</th><th></th></tr></thead>
+            <tbody id="liquidaciones-tbody"></tbody>
+          </table></div>
         </div>
       </div>
 
@@ -213,11 +227,11 @@
         </table></div></div>
       </div>
 
-      <!-- GARANTIAS -->
+      <!-- GARANTIAS / HISTORIAL DE ENTREGAS -->
       <div class="pg" id="pg-garantias">
-        <div class="pg-header"><div><h1>Garantías</h1></div><button class="btn btn-primary" onclick="openModalGarantia()">+ Nueva</button></div>
+        <div class="pg-header"><div><h1>Historial de entregas</h1><p>Órdenes finalizadas y entregadas al cliente.</p></div></div>
         <div class="card"><div class="table-wrap"><table>
-          <thead><tr><th>Cliente</th><th>Placa</th><th>Orden</th><th>Descripción</th><th>Vence</th><th>Estado</th><th>Acciones</th></tr></thead>
+          <thead><tr><th>N° Orden</th><th>Cliente</th><th>Placa</th><th>Moto</th><th>Fecha ingreso</th><th>Servicios</th><th>Repuestos</th><th>Observaciones</th><th>Total</th><th>Acciones</th></tr></thead>
           <tbody id="gar-tbody"></tbody>
         </table></div></div>
       </div>
@@ -271,6 +285,63 @@
               <thead><tr><th>Tipo</th><th>Teléfono</th><th>Estado</th><th>Fecha</th></tr></thead>
               <tbody id="wa-history-tbody"></tbody>
             </table></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RECIBOS PERSONALIZADOS -->
+      <div class="pg" id="pg-recibos">
+        <div class="pg-header">
+          <div><h1>Crear Recibos</h1><p>Genera recibos personalizados de 58mm para cualquier servicio</p></div>
+        </div>
+        <div class="grid-2" style="align-items:start">
+          <div class="card">
+            <h3>Nuevo recibo</h3>
+            <div class="form-group"><label>Facturar a (opcional)</label><input id="rec-cliente" type="text" placeholder="Nombre del cliente"></div>
+            <div class="form-group"><label>Descripción *</label><textarea id="rec-descripcion" rows="4" placeholder="Descripción del servicio o producto..."></textarea></div>
+            <div class="form-group"><label>Valor ($) *</label><input id="rec-valor" type="number" min="0" step="1000" placeholder="0"></div>
+            <div class="form-group"><label>Fecha</label><input id="rec-fecha" type="date"></div>
+            <button class="btn btn-primary w-full" onclick="saveRecibo()">Generar recibo</button>
+          </div>
+          <div class="card">
+            <h3>Historial de recibos</h3>
+            <div class="table-wrap"><table>
+              <thead><tr><th>N°</th><th>Cliente</th><th>Descripción</th><th>Valor</th><th>Fecha</th><th></th></tr></thead>
+              <tbody id="recibos-tbody"></tbody>
+            </table></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AJUSTES -->
+      <div class="pg" id="pg-ajustes">
+        <div class="pg-header">
+          <div><h1>Ajustes del taller</h1><p>Configuración global del sistema y plantillas de recibos.</p></div>
+          <button class="btn btn-primary" onclick="saveAjustes()">💾 Guardar cambios</button>
+        </div>
+        <div class="grid-2" style="align-items:start">
+          <div class="card">
+            <h3>Datos del taller</h3>
+            <div class="form-group"><label>Nombre del taller</label><input id="ajuste-nombre" type="text" placeholder="Mi Taller Motos"></div>
+            <div class="form-group"><label>NIT</label><input id="ajuste-nit" type="text" placeholder="123456789"></div>
+            <div class="form-group"><label>Teléfono</label><input id="ajuste-telefono" type="text" placeholder="3001234567"></div>
+            <div class="form-group"><label>Dirección (opcional)</label><input id="ajuste-direccion" type="text" placeholder="Calle 10 #5-20"></div>
+          </div>
+          <div class="card">
+            <h3>Plantillas de recibos (58mm)</h3>
+            <div class="form-group">
+              <label>Pie de página — Recibo de órdenes</label>
+              <textarea id="ajuste-pie-orden" rows="3" placeholder="Gracias por su visita"></textarea>
+            </div>
+            <div class="form-group">
+              <label>Pie de página — Recibo de ventas</label>
+              <textarea id="ajuste-pie-venta" rows="3" placeholder="Gracias por su compra"></textarea>
+            </div>
+            <div class="form-group">
+              <label>Pie de página — Recibo personalizado</label>
+              <textarea id="ajuste-pie-custom" rows="3" placeholder="Gracias por su preferencia"></textarea>
+            </div>
+            <p class="text-muted text-sm" style="margin-top:8px">Este texto aparece al final de cada recibo impreso.</p>
           </div>
         </div>
       </div>
@@ -369,9 +440,11 @@
     <button class="modal-close" onclick="closeModal('modal-empleado')">✕</button>
     <h2>Empleado</h2>
     <input type="hidden" id="emp-id">
-    <div class="form-group"><label>Nombre</label><input id="emp-name" type="text"></div>
-    <div class="form-group"><label>Cargo</label><input id="emp-role" type="text" placeholder="Mecánico"></div>
-    <div class="form-group"><label>Teléfono</label><input id="emp-phone" type="text"></div>
+    <div class="form-group"><label>Nombre *</label><input id="emp-name" type="text" placeholder="Juan Pérez"></div>
+    <div class="grid-2">
+      <div class="form-group"><label>Cargo</label><input id="emp-role" type="text" placeholder="Mecánico"></div>
+      <div class="form-group"><label>Teléfono</label><input id="emp-phone" type="text" placeholder="300 000 0000"></div>
+    </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('modal-empleado')">Cancelar</button>
       <button class="btn btn-primary" onclick="saveEmpleado()">Guardar</button>
@@ -379,16 +452,98 @@
   </div>
 </div>
 
+<div class="modal-overlay hidden" id="modal-entregar-orden">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-entregar-orden')">✕</button>
+    <h2>Entregar moto al cliente</h2>
+    <p class="text-muted text-sm" style="margin-bottom:16px">Se generará la factura y el movimiento de caja.</p>
+    <div class="form-group">
+      <label>Método de pago</label>
+      <select id="entregar-metodo">
+        <option value="efectivo">Efectivo</option>
+        <option value="transferencia">Transferencia</option>
+        <option value="tarjeta">Tarjeta</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Empleado responsable (opcional)</label>
+      <select id="entregar-empleado" onchange="updateEntregarPct()">
+        <option value="">Sin empleado asignado</option>
+      </select>
+    </div>
+    <div class="form-group" id="entregar-pct-group" style="display:none">
+      <label>Comisión del empleado (%)</label>
+      <input id="entregar-porcentaje" type="number" min="0" max="100" step="5" value="0" oninput="updateEntregarPct()">
+      <small id="entregar-pct-preview" class="text-muted" style="font-size:11px"></small>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-entregar-orden')">Cancelar</button>
+      <button class="btn btn-primary" id="btn-confirmar-entrega" onclick="confirmarEntrega()">Entregar y facturar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay hidden" id="modal-pago">
   <div class="modal">
     <button class="modal-close" onclick="closeModal('modal-pago')">✕</button>
-    <h2>Registrar pago</h2>
-    <div class="form-group"><label>Monto</label><input id="pago-amount" type="number" min="0" step="0.01"></div>
-    <div class="form-group"><label>Fecha</label><input id="pago-date" type="date"></div>
-    <div class="form-group"><label>Nota</label><input id="pago-note" type="text" placeholder="Quincena, comisión..."></div>
+    <h2>Registrar pago a empleado</h2>
+    <div class="form-group">
+      <label>Empleado *</label>
+      <select id="pago-emp-id"><option value="">-- Seleccionar empleado --</option></select>
+    </div>
+    <div class="form-group">
+      <label>Orden asociada (opcional)</label>
+      <select id="pago-orden-id"><option value="">-- Sin orden --</option></select>
+    </div>
+    <div class="grid-2">
+      <div class="form-group">
+        <label>Valor base ($)</label>
+        <input id="pago-base" type="number" min="0" step="1000" placeholder="0" oninput="calcPagoPreview()">
+      </div>
+      <div class="form-group">
+        <label>Porcentaje a pagar (%)</label>
+        <input id="pago-porcentaje" type="number" min="0" max="100" step="5" value="100" oninput="calcPagoPreview()">
+      </div>
+    </div>
+    <div id="pago-preview" style="background:var(--bg);border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:13px;min-height:36px"></div>
+    <div class="grid-2">
+      <div class="form-group"><label>Fecha</label><input id="pago-date" type="date"></div>
+      <div class="form-group"><label>Nota</label><input id="pago-note" type="text" placeholder="Quincena, trabajo extra..."></div>
+    </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('modal-pago')">Cancelar</button>
-      <button class="btn btn-primary" onclick="savePago()">Registrar</button>
+      <button class="btn btn-primary" onclick="savePago()">Registrar pago</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="modal-emp-detalle">
+  <div class="modal" style="max-width:700px">
+    <button class="modal-close" onclick="closeModal('modal-emp-detalle')">✕</button>
+    <h2 id="emp-detalle-title">Trabajos pendientes</h2>
+    <div id="emp-detalle-resumen" style="background:var(--bg);border-radius:6px;padding:10px 16px;margin-bottom:14px;font-size:14px"></div>
+    <div class="table-wrap" style="max-height:320px;overflow-y:auto"><table>
+      <thead><tr><th>Orden</th><th>Valor base</th><th>%</th><th>Pago generado</th><th>Fecha</th><th>Nota</th></tr></thead>
+      <tbody id="emp-detalle-tbody"></tbody>
+    </table></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-emp-detalle')">Cerrar</button>
+      <button class="btn btn-primary" id="btn-liquidar-emp" onclick="liquidarEmpleado()">Liquidar y pagar todo</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="modal-liquidacion-detalle">
+  <div class="modal" style="max-width:640px">
+    <button class="modal-close" onclick="closeModal('modal-liquidacion-detalle')">✕</button>
+    <h2 id="liq-detalle-title">Detalle de liquidación</h2>
+    <div id="liq-detalle-resumen" style="background:var(--bg);border-radius:6px;padding:10px 16px;margin-bottom:14px;font-size:14px"></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Orden</th><th>Valor base</th><th>%</th><th>Pago</th><th>Fecha</th></tr></thead>
+      <tbody id="liq-detalle-tbody"></tbody>
+    </table></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-liquidacion-detalle')">Cerrar</button>
     </div>
   </div>
 </div>

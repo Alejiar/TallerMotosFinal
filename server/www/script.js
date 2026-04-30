@@ -45,6 +45,17 @@ function openModal(id) { document.getElementById(id).classList.remove('hidden');
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 
 // ─── Auth ────────────────────────────────────
+async function loadTallerNombre() {
+  try {
+    const cfg = await api('ajustes', 'config_get');
+    if (cfg.nombre_taller) {
+      const logo = document.getElementById('sidebar-logo');
+      if (logo) logo.innerHTML = `🏍️ ${cfg.nombre_taller} <span>Pro</span>`;
+      document.title = cfg.nombre_taller + ' – MotoFlow Pro';
+    }
+  } catch {}
+}
+
 async function doLogin() {
   const u = document.getElementById('login-user').value.trim();
   const p = document.getElementById('login-pass').value;
@@ -60,7 +71,10 @@ async function doLogin() {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
   document.getElementById('topbar-user').textContent = `👤 ${res.nombre} (${res.rol})`;
+  loadTallerNombre();
   startWAStatusPoll();
+  loadStockAlertas();
+  setInterval(loadStockAlertas, 5 * 60 * 1000);
   showPage('dashboard');
 }
 
@@ -79,8 +93,9 @@ const PAGE_TITLES = {
   dashboard: 'Dashboard', motos: 'Motos en taller', ordenes: 'Órdenes',
   'orden-detalle': 'Detalle de orden', inventario: 'Inventario',
   ventas: 'Ventas', facturas: 'Facturas', proveedores: 'Proveedores',
-  compras: 'Compras', empleados: 'Empleados', caja: 'Caja', garantias: 'Garantías',
+  compras: 'Compras', empleados: 'Empleados', caja: 'Caja', garantias: 'Historial de entregas',
   notas: 'Notas', mensajes: 'Plantillas WhatsApp', whatsapp: 'WhatsApp', buscar: 'Búsqueda',
+  recibos: 'Crear Recibos', ajustes: 'Ajustes',
 };
 
 function showPage(page) {
@@ -95,9 +110,38 @@ function showPage(page) {
     inventario: loadInventario, ventas: loadVentas, facturas: loadFacturas,
     proveedores: loadProveedores, compras: loadCompras, empleados: loadEmpleados,
     caja: loadCaja, garantias: loadGarantias, notas: loadNotas,
-    mensajes: loadMensajes, whatsapp: loadWhatsApp, buscar: () => {} };
+    mensajes: loadMensajes, whatsapp: loadWhatsApp, buscar: () => {},
+    recibos: loadRecibos, ajustes: loadAjustes };
   if (loaders[page]) loaders[page]();
 }
+
+// ─── Alertas de inventario ────────────────────
+async function loadStockAlertas() {
+  const prods = await fetch('/php/inventario?action=stock_bajo').then(r => r.json()).catch(() => []);
+  const count = (prods || []).length;
+  const badge = document.getElementById('stock-alert-count');
+  const list = document.getElementById('stock-alert-list');
+  if (!badge || !list) return;
+  if (count > 0) { badge.textContent = count; badge.classList.remove('hidden'); }
+  else { badge.classList.add('hidden'); }
+  list.innerHTML = count === 0
+    ? '<div class="alert-drop-empty">Sin alertas de inventario</div>'
+    : prods.map(p => `<div class="alert-drop-item" onclick="showPage('inventario');closeStockAlert()">
+        <div><div class="alert-drop-name">${p.name}</div><div style="font-size:11px;color:var(--text-muted)">${p.code || ''}</div></div>
+        <div class="alert-drop-stock">Stock: ${p.stock} / Mín: ${p.minStock}</div>
+      </div>`).join('');
+}
+function toggleStockAlert() {
+  const dd = document.getElementById('stock-alert-dropdown');
+  if (!dd) return;
+  const isHidden = dd.classList.contains('hidden');
+  dd.classList.toggle('hidden');
+  if (isHidden) loadStockAlertas();
+}
+function closeStockAlert() { document.getElementById('stock-alert-dropdown')?.classList.add('hidden'); }
+document.addEventListener('click', e => {
+  if (!document.getElementById('stock-alert-bell')?.contains(e.target)) closeStockAlert();
+});
 
 // ─── Badge WhatsApp ───────────────────────────
 function startWAStatusPoll() {
@@ -116,6 +160,97 @@ async function updateWABadge() {
     // Si la página WA está activa, actualizar también
     if (document.getElementById('pg-whatsapp').classList.contains('active')) updateWAPage(d);
   } catch {}
+}
+
+// ─── AJUSTES ──────────────────────────────────
+async function loadAjustes() {
+  const cfg = await api('ajustes', 'config_get');
+  document.getElementById('ajuste-nombre').value = cfg.nombre_taller || '';
+  document.getElementById('ajuste-nit').value = cfg.nit || '';
+  document.getElementById('ajuste-telefono').value = cfg.telefono || '';
+  document.getElementById('ajuste-direccion').value = cfg.direccion || '';
+  document.getElementById('ajuste-pie-orden').value = cfg.pie_recibo_orden || 'Gracias por su visita';
+  document.getElementById('ajuste-pie-venta').value = cfg.pie_recibo_venta || 'Gracias por su compra';
+  const pcEl = document.getElementById('ajuste-pie-custom');
+  if (pcEl) pcEl.value = cfg.pie_recibo_custom || 'Gracias por su preferencia';
+}
+
+async function saveAjustes() {
+  const data = {
+    nombre_taller: document.getElementById('ajuste-nombre').value.trim(),
+    nit: document.getElementById('ajuste-nit').value.trim(),
+    telefono: document.getElementById('ajuste-telefono').value.trim(),
+    direccion: document.getElementById('ajuste-direccion').value.trim(),
+    pie_recibo_orden: document.getElementById('ajuste-pie-orden').value,
+    pie_recibo_venta: document.getElementById('ajuste-pie-venta').value,
+    pie_recibo_custom: document.getElementById('ajuste-pie-custom')?.value || '',
+  };
+  const r = await api('ajustes', 'config_set', data);
+  if (r.error) { toast(r.error, 'error'); return; }
+  loadTallerNombre();
+  toast('Ajustes guardados ✓', 'success');
+}
+
+// ─── RECIBOS PERSONALIZADOS ───────────────────
+async function loadRecibos() {
+  document.getElementById('rec-fecha').value = todayISO();
+  const rows = await fetch('/php/recibos?action=listar').then(r => r.json()).catch(() => []);
+  document.getElementById('recibos-tbody').innerHTML = (rows || []).map(r => `<tr>
+    <td class="font-mono" style="color:var(--primary)">${r.number}</td>
+    <td>${r.cliente || '-'}</td>
+    <td style="max-width:160px;font-size:12px">${r.descripcion || '-'}</td>
+    <td>${money(r.valor)}</td>
+    <td>${dateShort(r.fecha)}</td>
+    <td class="flex gap-2">
+      <button class="btn btn-outline btn-sm btn-icon" onclick="imprimirReciboCustom(${r.id})" title="Imprimir">🖨</button>
+      <button class="btn btn-ghost btn-sm btn-icon" onclick="eliminarRecibo(${r.id})" title="Eliminar">🗑</button>
+    </td>
+  </tr>`).join('') || '<tr><td colspan="6" class="empty-state">Sin recibos generados</td></tr>';
+}
+
+async function saveRecibo() {
+  const descripcion = document.getElementById('rec-descripcion').value.trim();
+  const valor = parseFloat(document.getElementById('rec-valor').value);
+  const cliente = document.getElementById('rec-cliente').value.trim();
+  const fecha = document.getElementById('rec-fecha').value || todayISO();
+  if (!descripcion) { toast('La descripción es requerida', 'error'); return; }
+  if (!valor) { toast('El valor es requerido', 'error'); return; }
+  const r = await fetch('/php/recibos?action=crear', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ descripcion, valor, cliente, fecha }),
+  }).then(r => r.json()).catch(() => ({ error: 'Error de red' }));
+  if (r.error) { toast(r.error, 'error'); return; }
+  toast(`Recibo ${r.number} generado ✓`, 'success');
+  document.getElementById('rec-descripcion').value = '';
+  document.getElementById('rec-valor').value = '';
+  document.getElementById('rec-cliente').value = '';
+  imprimirReciboCustom(r.id);
+  loadRecibos();
+}
+
+function imprimirReciboCustom(id) {
+  const w = window.open(`/php/recibo?tipo=custom&id=${id}`, '_blank', 'width=420,height=700,menubar=yes');
+  if (w) w.addEventListener('load', () => setTimeout(() => w.print(), 400));
+}
+
+async function eliminarRecibo(id) {
+  if (!confirm('¿Eliminar este recibo?')) return;
+  await fetch('/php/recibos?action=eliminar', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+  loadRecibos();
+}
+
+// ─── IMPRESIÓN DE RECIBOS ─────────────────────
+function imprimirReciboVenta(id) {
+  const w = window.open(`/php/recibo?tipo=venta&id=${id}`, '_blank', 'width=420,height=700,menubar=yes');
+  if (w) w.addEventListener('load', () => setTimeout(() => w.print(), 400));
+}
+
+function imprimirReciboOrden(id) {
+  const w = window.open(`/php/recibo?tipo=orden&id=${id}`, '_blank', 'width=420,height=700,menubar=yes');
+  if (w) w.addEventListener('load', () => setTimeout(() => w.print(), 400));
 }
 
 // ─── DASHBOARD ────────────────────────────────
@@ -225,18 +360,56 @@ async function crearOrden() {
 
 // ─── ORDENES LISTA ────────────────────────────
 async function loadOrdenes() {
-  const all = document.getElementById('ordenes-todas')?.checked ? '&all=1' : '';
+  const mostrarTodas = document.getElementById('ordenes-todas')?.checked;
+  const all = mostrarTodas ? '&all=1' : '';
   const rows = await get('ordenes', 'listar', all);
-  const tbody = document.getElementById('ordenes-tbody');
-  tbody.innerHTML = rows.map(o => `<tr>
+
+  const grupos = [
+    { label: '🔴 Pendientes', keys: ['ingresada', 'diagnostico'] },
+    { label: '🔧 En proceso', keys: ['esperando_repuestos', 'reparacion', 'reparando'] },
+    { label: '✅ Listas para entregar', keys: ['lista'] },
+  ];
+  if (mostrarTodas) grupos.push({ label: '📦 Entregadas', keys: ['entregada'] });
+
+  const colsHeader = `<tr><th>N°</th><th>Cliente</th><th>Placa</th><th>Estado</th><th>Ingreso</th><th>Total</th><th>Acciones</th></tr>`;
+  const rowFn = o => `<tr>
     <td><a href="#" class="font-mono" style="color:var(--primary)" onclick="openOrdenDetalle(${o.id})">${o.number}</a></td>
     <td>${o.cliente_name || '-'}</td>
     <td class="font-mono">${o.plate || '-'}</td>
-    <td><span class="badge badge-${o.status}">${STATUS_LABELS[o.status]}</span></td>
+    <td><span class="badge badge-${o.status}">${STATUS_LABELS[o.status] || o.status}</span></td>
     <td>${dateShort(o.entryDate)}</td>
     <td>${money(o.total)}</td>
-    <td><button class="btn btn-outline btn-sm" onclick="openOrdenDetalle(${o.id})">Ver</button></td>
-  </tr>`).join('') || '<tr><td colspan="7" class="empty-state">Sin órdenes</td></tr>';
+    <td class="flex gap-2">
+      <button class="btn btn-outline btn-sm" onclick="openOrdenDetalle(${o.id})">Ver</button>
+      <button class="btn btn-outline btn-sm btn-icon" onclick="imprimirReciboOrden(${o.id})" title="Imprimir recibo">🖨</button>
+    </td>
+  </tr>`;
+
+  const pg = document.getElementById('pg-ordenes');
+  let html = '';
+  let totalMostradas = 0;
+  for (const g of grupos) {
+    const sub = rows.filter(o => g.keys.includes(o.status));
+    totalMostradas += sub.length;
+    html += `<div class="card mb-4">
+      <h3 style="margin-bottom:12px">${g.label} <span class="badge" style="font-size:11px">${sub.length}</span></h3>
+      ${sub.length ? `<div class="table-wrap"><table><thead>${colsHeader}</thead><tbody>${sub.map(rowFn).join('')}</tbody></table></div>`
+        : `<div class="empty-state" style="padding:16px">Sin órdenes en esta categoría</div>`}
+    </div>`;
+  }
+  if (!totalMostradas) html = '<div class="empty-state">Sin órdenes registradas</div>';
+
+  // Reemplazar contenido debajo del pg-header
+  let container = pg.querySelector('#ordenes-content');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'ordenes-content';
+    pg.appendChild(container);
+  }
+  // Ocultar tabla original si existe
+  const oldCard = pg.querySelector('.card');
+  if (oldCard) oldCard.style.display = 'none';
+  container.innerHTML = html;
 }
 
 // ─── ORDEN DETALLE ────────────────────────────
@@ -253,7 +426,7 @@ async function openOrdenDetalle(id) {
 
 function renderOrdenDetalle(d) {
   const locked = d.locked;
-  const total = d.parts.reduce((a,p) => a + p.qty*p.unitPrice, 0) + d.services.reduce((a,s) => a + s.price, 0);
+  const total = d.parts.reduce((a,p) => a + (p.qty||1)*(p.price||p.unitPrice||0), 0) + d.services.reduce((a,s) => a + (s.price||0), 0);
   document.getElementById('orden-detalle-content').innerHTML = `
     <div class="flex items-center gap-2 mb-4">
       <button class="btn btn-ghost btn-sm" onclick="history.back()">← Atrás</button>
@@ -261,7 +434,7 @@ function renderOrdenDetalle(d) {
       <span class="badge badge-${d.status}">${STATUS_LABELS[d.status]}</span>
       ${locked ? '<span class="badge" style="background:#e2e8f0;color:#64748b">🔒 Bloqueada</span>' : ''}
       <div style="margin-left:auto;display:flex;gap:8px">
-        <button class="btn btn-outline" onclick="window.print()">🖨 Imprimir</button>
+        <button class="btn btn-outline" onclick="imprimirReciboOrden(${d.id})">🖨 Imprimir recibo</button>
         <button class="btn btn-ghost" onclick="verHistorialOrden(${d.id})">📜 Historial</button>
         ${d.status === 'lista' ? `<button class="btn btn-primary" onclick="entregarOrden(${d.id})">Entregar y facturar</button>` : ''}
         ${!locked && d.status !== 'entregada' ? `<button class="btn btn-success" onclick="finalizarOrden(${d.id})">Finalizar orden</button>` : ''}
@@ -312,8 +485,8 @@ function renderOrdenDetalle(d) {
         <div id="od-parts">
           ${d.parts.map((p,i) => `<div class="part-row">
             <div style="flex:1;font-size:13px">${p.name}</div>
-            <input type="number" min="1" value="${p.qty}" style="width:60px" ${locked?'disabled':''} onchange="actualizarQtyParte(${d.id},${i},this.value)">
-            <span style="width:100px;text-align:right;font-size:13px">${money(p.qty*p.unitPrice)}</span>
+            <input type="number" min="1" value="${p.qty||1}" style="width:60px" ${locked?'disabled':''} onchange="actualizarQtyParte(${d.id},${i},this.value)">
+            <span style="width:100px;text-align:right;font-size:13px">${money((p.qty||1)*(p.price||p.unitPrice||0))}</span>
             ${!locked ? `<button class="btn btn-ghost btn-icon" onclick="quitarParte(${d.id},${i})">🗑</button>` : ''}
           </div>`).join('') || '<p class="text-muted text-sm">Sin repuestos.</p>'}
         </div>
@@ -367,19 +540,23 @@ async function actualizarCampoOrden(id, field, value) {
 }
 
 async function buscarRepuestoOrden(orderId) {
-  const q = document.getElementById('od-prod-search')?.value ?? '';
-  if (q.length < 1) { document.getElementById('od-prod-results')?.classList.add('hidden'); return; }
-  const prods = _ordenActual?._productos?.filter(p => {
-    const t = q.toLowerCase();
-    return p.name.toLowerCase().includes(t) || p.code.toLowerCase().includes(t) || (p.shelf||'').toLowerCase().includes(t);
-  }).slice(0, 20) ?? [];
+  const q = document.getElementById('od-prod-search')?.value?.trim() ?? '';
   const res = document.getElementById('od-prod-results');
+  if (q.length < 2) { res?.classList.add('hidden'); return; }
+  const prods = await fetch(`/php/inventario?action=buscar&q=${encodeURIComponent(q)}`)
+    .then(r => r.json()).catch(() => []);
   if (!prods.length) { res.classList.add('hidden'); return; }
   res.classList.remove('hidden');
-  res.innerHTML = prods.map(p => `<button onclick="agregarParte(${orderId},${p.id})" style="display:flex;width:100%;align-items:center;justify-content:space-between;padding:8px 12px;border:none;background:none;cursor:pointer;font-size:13px;text-align:left" onmouseover="this.style.background='var(--bg)'" onmouseout="this.style.background='none'">
-    <span>${p.name} <span style="color:var(--text-muted);font-size:11px">· ${p.code}${p.shelf?' · Estante '+p.shelf:''}</span></span>
-    <span style="font-size:12px">${money(p.price)} · stock ${p.stock}</span>
-  </button>`).join('');
+  res.innerHTML = prods.map(p => {
+    const sinStock = p.stock <= 0;
+    return `<button onclick="${sinStock ? '' : `agregarParte(${orderId},${p.id})`}"
+      style="display:flex;width:100%;align-items:center;justify-content:space-between;padding:8px 12px;border:none;background:none;cursor:${sinStock?'not-allowed':'pointer'};font-size:13px;text-align:left;opacity:${sinStock?'0.5':'1'}"
+      onmouseover="this.style.background='var(--bg)'" onmouseout="this.style.background='none'"
+      ${sinStock ? 'disabled title="Sin stock disponible"' : ''}>
+      <span>${p.name} <span style="color:var(--text-muted);font-size:11px">· ${p.code||''}${p.shelf?' · '+p.shelf:''}</span></span>
+      <span style="font-size:12px;color:${sinStock?'var(--danger)':'inherit'}">${money(p.price)} · stock: ${p.stock}</span>
+    </button>`;
+  }).join('');
 }
 
 async function agregarParte(orderId, productId) {
@@ -398,7 +575,8 @@ async function quitarParte(orderId, idx) {
 }
 
 async function actualizarQtyParte(orderId, idx, qty) {
-  await api('ordenes', 'actualizar_qty', { id: orderId, idx, qty: Number(qty) });
+  const r = await api('ordenes', 'actualizar_qty', { id: orderId, idx, qty: Number(qty) });
+  if (r.error) { toast(r.error, 'error'); }
   openOrdenDetalle(orderId);
 }
 
@@ -439,11 +617,44 @@ async function finalizarOrden(id) {
 }
 
 async function entregarOrden(id) {
-  if (!confirm('¿Entregar moto al cliente? Se generará la factura y se registrará el ingreso en caja.')) return;
-  const r = await api('ordenes', 'entregar', { id });
+  if (empleadosData.length === 0) await loadEmpleados();
+  document.getElementById('entregar-orden-id').value = id;
+  const metEl = document.getElementById('entregar-metodo');
+  if (metEl) metEl.value = 'efectivo';
+  const pctEl = document.getElementById('entregar-porcentaje');
+  if (pctEl) pctEl.value = '';
+  updateEntregarPct();
+  openModal('modal-entregar-orden');
+}
+
+function updateEntregarPct() {
+  const empId = document.getElementById('entregar-empleado')?.value;
+  const pctGroup = document.getElementById('entregar-pct-group');
+  const pctInput = document.getElementById('entregar-porcentaje');
+  const pctPreview = document.getElementById('entregar-pct-preview');
+  if (!pctGroup) return;
+  pctGroup.style.display = empId ? 'block' : 'none';
+  if (!empId || !pctPreview) return;
+  const pct = parseFloat(pctInput?.value) || 0;
+  pctPreview.textContent = pct > 0
+    ? `Se acumulará ${pct}% del total como pago pendiente al empleado`
+    : 'Sin comisión — puedes registrarlo manualmente en Empleados';
+}
+
+async function confirmarEntrega() {
+  const id = document.getElementById('entregar-orden-id').value;
+  const method = document.getElementById('entregar-metodo')?.value || 'efectivo';
+  const empleadoId = document.getElementById('entregar-empleado')?.value || '';
+  const porcentaje = parseFloat(document.getElementById('entregar-porcentaje')?.value) || 0;
+  const r = await api('ordenes', 'entregar', {
+    id: parseInt(id), method,
+    empleadoId: empleadoId ? parseInt(empleadoId) : undefined,
+    porcentaje,
+  });
   if (r.error) { toast(r.error, 'error'); return; }
   toast(`Entregada. Factura ${r.ventaNumber} · ${money(r.total)} ✓`, 'success');
-  openOrdenDetalle(id);
+  closeModal('modal-entregar-orden');
+  openOrdenDetalle(parseInt(id));
 }
 
 async function verHistorialOrden(id) {
@@ -539,9 +750,17 @@ async function eliminarProducto(id) {
 // ─── VENTAS ───────────────────────────────────
 async function loadVentas() {
   const rows = await get('ventas', 'listar');
-  document.getElementById('ventas-tbody').innerHTML = rows.slice(0,20).map(v =>
-    `<tr><td class="font-mono">${v.number}</td><td>${dateShort(v.date)}</td><td>${money(v.total)}</td><td>${v.method}</td></tr>`
-  ).join('') || '<tr><td colspan="4" class="empty-state">Sin ventas</td></tr>';
+  const mostrador = rows.filter(v => v.type === 'mostrador' || !v.type);
+  const metodoPago = m => ({ efectivo: 'Efectivo', transferencia: 'Transferencia', tarjeta: 'Tarjeta' }[m] || m || '-');
+  document.getElementById('ventas-tbody').innerHTML = mostrador.slice(0, 30).map(v =>
+    `<tr>
+      <td class="font-mono">${v.number}</td>
+      <td>${dateShort(v.date)}</td>
+      <td>${money(v.total)}</td>
+      <td>${metodoPago(v.method)}</td>
+      <td><button class="btn btn-outline btn-sm btn-icon" onclick="imprimirReciboVenta(${v.id})" title="Imprimir recibo">🖨</button></td>
+    </tr>`
+  ).join('') || '<tr><td colspan="5" class="empty-state">Sin ventas</td></tr>';
   ventaItems = [];
   renderVentaItems();
 }
@@ -593,14 +812,22 @@ async function crearVenta() {
 // ─── FACTURAS ─────────────────────────────────
 async function loadFacturas() {
   const rows = await get('facturas', 'listar');
-  document.getElementById('facturas-tbody').innerHTML = rows.map(f => `<tr>
-    <td class="font-mono">${f.number}</td>
-    <td>${dateShort(f.date)}</td>
-    <td>${f.type === 'orden' ? 'Orden' : 'Mostrador'}</td>
-    <td>${f.orden_number || '-'}</td>
-    <td>${money(f.total)}</td>
-    <td>${f.method}</td>
-  </tr>`).join('') || '<tr><td colspan="6" class="empty-state">Sin facturas</td></tr>';
+  const metodoPago = m => ({ efectivo: 'Efectivo', transferencia: 'Transferencia', tarjeta: 'Tarjeta' }[m] || m || '-');
+  document.getElementById('facturas-tbody').innerHTML = rows.map(f => {
+    const esOrden = f.type === 'orden';
+    const btnImprimir = esOrden && f.orderId
+      ? `<button class="btn btn-outline btn-sm btn-icon" onclick="imprimirReciboOrden(${f.orderId})" title="Imprimir recibo de orden">🖨 Orden</button>`
+      : `<button class="btn btn-outline btn-sm btn-icon" onclick="imprimirReciboVenta(${f.id})" title="Reimprimir recibo">🖨</button>`;
+    return `<tr>
+      <td class="font-mono">${f.number}</td>
+      <td>${dateShort(f.date)}</td>
+      <td>${esOrden ? 'Orden' : 'Mostrador'}</td>
+      <td>${f.orden_number ? `<span class="font-mono">${f.orden_number}</span>` : '-'}</td>
+      <td>${money(f.total)}</td>
+      <td>${metodoPago(f.method)}</td>
+      <td>${btnImprimir}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" class="empty-state">Sin facturas</td></tr>';
 }
 
 // ─── PROVEEDORES ──────────────────────────────
@@ -707,23 +934,92 @@ async function saveCompra() {
 }
 
 // ─── EMPLEADOS ────────────────────────────────
+let _empDetalleId = null;
+
 async function loadEmpleados() {
-  empleadosData = await get('empleados', 'listar');
-  document.getElementById('emp-tbody').innerHTML = empleadosData.map(e => `<tr>
-    <td>${e.name}</td><td>${e.role||'-'}</td><td>${e.phone||'-'}</td>
-    <td><button class="btn btn-outline btn-sm btn-icon" onclick="openModalEmpleado(${e.id})">✏️</button></td>
-  </tr>`).join('') || '<tr><td colspan="4" class="empty-state">Sin empleados</td></tr>';
-  // Selector de empleado para pagos
-  const sel = document.getElementById('emp-pago-select');
-  sel.innerHTML = '<option value="">-- Seleccionar --</option>' + empleadosData.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
-  loadPagos();
+  const [acumulados, listar] = await Promise.all([
+    fetch('/php/empleados?action=acumulados').then(r => r.json()).catch(() => []),
+    get('empleados', 'listar'),
+  ]);
+  empleadosData = listar || [];
+  const rows = acumulados || [];
+  document.getElementById('emp-tbody').innerHTML = rows.map(e => `<tr>
+    <td><strong>${e.name}</strong></td>
+    <td>${e.role || '-'}</td>
+    <td>${e.phone || '-'}</td>
+    <td class="${e.acumulado > 0 ? 'text-primary font-bold' : 'text-muted'}">${money(e.acumulado)}</td>
+    <td><span class="badge badge-${e.trabajos_pendientes > 0 ? 'reparacion' : 'entregada'}">${e.trabajos_pendientes || 0} pendiente${e.trabajos_pendientes !== 1 ? 's' : ''}</span></td>
+    <td class="flex gap-2">
+      <button class="btn btn-outline btn-sm" onclick="openEmpleadoDetalle(${e.id},'${e.name.replace(/'/g,"\\'")}')">Ver detalle</button>
+      <button class="btn btn-primary btn-sm" onclick="openEmpleadoDetalle(${e.id},'${e.name.replace(/'/g,"\\'")}',true)" ${e.acumulado <= 0 ? 'disabled' : ''}>Pagar</button>
+      <button class="btn btn-ghost btn-sm btn-icon" onclick="openModalEmpleado(${e.id})">✏️</button>
+    </td>
+  </tr>`).join('') || '<tr><td colspan="6" class="empty-state">Sin empleados registrados</td></tr>';
+  // Actualizar selector de entrega de orden
+  const empOpts = empleadosData.map(e => `<option value="${e.id}">${e.name}${e.role ? ' · ' + e.role : ''}</option>`).join('');
+  const selEntregar = document.getElementById('entregar-empleado');
+  if (selEntregar) selEntregar.innerHTML = '<option value="">-- Sin asignar --</option>' + empOpts;
+  loadLiquidaciones();
 }
 
-async function loadPagos(empId = '') {
-  const rows = await get('empleados', 'pagos_listar', empId ? `&empleado_id=${empId}` : '');
-  document.getElementById('pagos-tbody').innerHTML = rows.map(p =>
-    `<tr><td>${p.empleado_name}</td><td>${money(p.amount)}</td><td>${dateShort(p.date)}</td><td>${p.note||'-'}</td></tr>`
-  ).join('') || '<tr><td colspan="4" class="empty-state">Sin pagos</td></tr>';
+async function openEmpleadoDetalle(empId, empName, autoLiquidar = false) {
+  _empDetalleId = empId;
+  document.getElementById('emp-detalle-title').textContent = `Trabajos pendientes — ${empName}`;
+  const rows = await fetch(`/php/empleados?action=pendientes&employeeId=${empId}`)
+    .then(r => r.json()).catch(() => []);
+  const total = (rows || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  document.getElementById('emp-detalle-resumen').innerHTML =
+    `<span>Total acumulado: <strong style="color:var(--primary);font-size:16px">${money(total)}</strong></span>
+     <span style="margin-left:16px;color:var(--text-muted)">${rows.length} trabajo${rows.length !== 1 ? 's' : ''} pendiente${rows.length !== 1 ? 's' : ''}</span>`;
+  document.getElementById('emp-detalle-tbody').innerHTML = (rows || []).map(p => `<tr>
+    <td class="font-mono">${p.orden_number || '-'}</td>
+    <td>${money(p.total_orden || 0)}</td>
+    <td>${p.porcentaje != null ? p.porcentaje + '%' : '-'}</td>
+    <td class="font-bold">${money(p.amount)}</td>
+    <td>${dateShort(p.date)}</td>
+    <td style="font-size:12px;color:var(--text-muted)">${p.note || '-'}</td>
+  </tr>`).join('') || '<tr><td colspan="6" class="empty-state">Sin trabajos pendientes</td></tr>';
+  document.getElementById('btn-liquidar-emp').disabled = rows.length === 0;
+  openModal('modal-emp-detalle');
+  if (autoLiquidar && rows.length > 0) liquidarEmpleado();
+}
+
+async function liquidarEmpleado() {
+  if (!_empDetalleId) return;
+  if (!confirm('¿Confirmar liquidación? Se pagará el total acumulado y se registrará en caja.')) return;
+  const r = await api('empleados', 'liquidar', { employeeId: _empDetalleId });
+  if (r.error) { toast(r.error, 'error'); return; }
+  toast(`Liquidación registrada: ${money(r.total)} (${r.count} trabajos) ✓`, 'success');
+  closeModal('modal-emp-detalle');
+  loadEmpleados();
+}
+
+async function loadLiquidaciones(empId = '') {
+  const url = `/php/empleados?action=liquidaciones_listar${empId ? '&employeeId=' + empId : ''}`;
+  const rows = await fetch(url).then(r => r.json()).catch(() => []);
+  document.getElementById('liquidaciones-tbody').innerHTML = (rows || []).map(l => `<tr>
+    <td><strong>${l.empleado_name || '-'}</strong></td>
+    <td class="font-bold text-primary">${money(l.total)}</td>
+    <td>${(l.items || []).length} trabajos</td>
+    <td>${dateShort(l.date)}</td>
+    <td><button class="btn btn-outline btn-sm" onclick="openLiquidacionDetalle(${l.id},'${(l.empleado_name || '').replace(/'/g,"\\'")}',${l.total})">Ver detalle</button></td>
+  </tr>`).join('') || '<tr><td colspan="5" class="empty-state">Sin liquidaciones registradas</td></tr>';
+}
+
+async function openLiquidacionDetalle(liqId, empName, total) {
+  document.getElementById('liq-detalle-title').textContent = `Liquidación — ${empName}`;
+  document.getElementById('liq-detalle-resumen').innerHTML =
+    `Total pagado: <strong style="color:var(--primary);font-size:16px">${money(total)}</strong>`;
+  const rows = await fetch(`/php/empleados?action=liquidacion_detalle&id=${liqId}`)
+    .then(r => r.json()).catch(() => []);
+  document.getElementById('liq-detalle-tbody').innerHTML = (rows || []).map(p => `<tr>
+    <td class="font-mono">${p.orden_number || '-'}</td>
+    <td>${money(p.total_orden || 0)}</td>
+    <td>${p.porcentaje != null ? p.porcentaje + '%' : '-'}</td>
+    <td class="font-bold">${money(p.amount)}</td>
+    <td>${dateShort(p.date)}</td>
+  </tr>`).join('') || '<tr><td colspan="5" class="empty-state">Sin detalle</td></tr>';
+  openModal('modal-liquidacion-detalle');
 }
 
 function openModalEmpleado(id) {
@@ -737,7 +1033,11 @@ function openModalEmpleado(id) {
 
 async function saveEmpleado() {
   const id = document.getElementById('emp-id').value;
-  const data = { name: document.getElementById('emp-name').value.trim(), role: document.getElementById('emp-role').value, phone: document.getElementById('emp-phone').value };
+  const data = {
+    name: document.getElementById('emp-name').value.trim(),
+    role: document.getElementById('emp-role').value,
+    phone: document.getElementById('emp-phone').value,
+  };
   if (!data.name) { toast('Nombre requerido', 'error'); return; }
   const r = id ? await api('empleados', 'actualizar', { id: parseInt(id), ...data }) : await api('empleados', 'crear', data);
   if (r.error) { toast(r.error, 'error'); return; }
@@ -746,26 +1046,58 @@ async function saveEmpleado() {
   loadEmpleados();
 }
 
-function openModalPago() {
-  const empId = document.getElementById('emp-pago-select').value;
-  if (!empId) { toast('Selecciona un empleado', 'warning'); return; }
-  document.getElementById('pago-amount').value = '';
+async function openModalPago() {
+  if (empleadosData.length === 0) await loadEmpleados();
+  const selEmp = document.getElementById('pago-emp-id');
+  selEmp.innerHTML = '<option value="">-- Seleccionar empleado --</option>' +
+    empleadosData.map(e => `<option value="${e.id}">${e.name}${e.role ? ' · ' + e.role : ''}</option>`).join('');
+  const ordenes = await fetch('/php/ordenes?action=listar').then(r => r.json()).catch(() => []);
+  const selOrden = document.getElementById('pago-orden-id');
+  selOrden.innerHTML = '<option value="">-- Sin orden --</option>' +
+    (ordenes || []).map(o => `<option value="${o.id}">${o.number} · ${o.cliente_name || ''} · ${o.plate || ''}</option>`).join('');
+  document.getElementById('pago-base').value = '';
+  document.getElementById('pago-porcentaje').value = '100';
   document.getElementById('pago-date').value = todayISO();
   document.getElementById('pago-note').value = '';
+  document.getElementById('pago-preview').innerHTML = '';
   openModal('modal-pago');
 }
 
+function calcPagoPreview() {
+  const base = parseFloat(document.getElementById('pago-base').value) || 0;
+  const pct = parseFloat(document.getElementById('pago-porcentaje').value) || 0;
+  const valorPago = Math.round(base * pct / 100);
+  const ganancia = base - valorPago;
+  const el = document.getElementById('pago-preview');
+  if (!base) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div style="display:flex;gap:16px;flex-wrap:wrap">
+    <span>Base: <strong>${money(base)}</strong></span>
+    <span style="color:var(--primary)">Pago empleado (<strong>${pct}%</strong>): <strong>${money(valorPago)}</strong></span>
+    <span style="color:var(--success)">Ganancia taller: <strong>${money(ganancia)}</strong></span>
+  </div>`;
+}
+
 async function savePago() {
-  const empId = document.getElementById('emp-pago-select').value;
-  const amount = parseFloat(document.getElementById('pago-amount').value);
+  const empId = document.getElementById('pago-emp-id').value;
+  const ordenId = document.getElementById('pago-orden-id').value;
+  const base = parseFloat(document.getElementById('pago-base').value);
+  const pct = parseFloat(document.getElementById('pago-porcentaje').value) || 0;
   const date = document.getElementById('pago-date').value;
   const note = document.getElementById('pago-note').value;
-  if (!empId || !amount) { toast('Datos requeridos', 'error'); return; }
-  const r = await api('empleados', 'pagos_crear', { employeeId: parseInt(empId), amount, date, note });
+  if (!empId) { toast('Selecciona un empleado', 'error'); return; }
+  if (!base) { toast('Ingresa el valor base', 'error'); return; }
+  const r = await api('empleados', 'pagos_crear', {
+    employeeId: parseInt(empId),
+    orderId: ordenId ? parseInt(ordenId) : null,
+    total_orden: base,
+    porcentaje: pct,
+    date,
+    note,
+  });
   if (r.error) { toast(r.error, 'error'); return; }
-  toast('Pago registrado ✓', 'success');
+  toast(`Trabajo registrado: ${money(r.amount)} acumulado ✓`, 'success');
   closeModal('modal-pago');
-  loadPagos(empId);
+  loadEmpleados();
 }
 
 // ─── CAJA ─────────────────────────────────────
@@ -803,22 +1135,33 @@ async function saveMovimiento() {
   loadCaja();
 }
 
-// ─── GARANTÍAS ────────────────────────────────
+// ─── HISTORIAL DE ENTREGAS (antes Garantías) ──
 async function loadGarantias() {
-  const rows = await get('garantias', 'listar');
-  document.getElementById('gar-tbody').innerHTML = (rows || []).map(g => `<tr>
-    <td>${g.cliente_name||'-'}</td>
-    <td class="font-mono">${g.plate||'-'}</td>
-    <td>${g.orden_number ? `<span class="font-mono">${g.orden_number}</span>` : '-'}</td>
-    <td>${g.description||''}</td>
-    <td>${dateShort(g.expiresAt)}</td>
-    <td><span class="badge badge-${g.status}">${g.status}</span></td>
-    <td class="flex gap-2">
-      ${g.orderId ? `<button class="btn btn-outline btn-sm" onclick="openOrdenDetalle(${g.orderId})" title="Ver orden">🔍 Orden</button>` : ''}
-      <button class="btn btn-outline btn-sm btn-icon" onclick="openModalGarantia(${g.id})" title="Editar">✏️</button>
-      <button class="btn btn-danger btn-sm btn-icon" onclick="eliminarGarantia(${g.id})" title="Eliminar">🗑</button>
-    </td>
-  </tr>`).join('') || '<tr><td colspan="7" class="empty-state">Sin garantías. Crea una desde una moto entregada.</td></tr>';
+  // Usamos fetch directo para evitar el bug del adapter.js que ignora params en listar
+  const rows = await fetch('/php/ordenes?action=listar&all=1').then(r => r.json()).catch(() => []);
+  const entregadas = (rows || []).filter(o => o.status === 'entregada');
+  document.getElementById('gar-tbody').innerHTML = entregadas.map(o => {
+    let parts = [], services = [];
+    try { parts = JSON.parse(o.parts || '[]'); } catch {}
+    try { services = JSON.parse(o.services || '[]'); } catch {}
+    const partsStr = parts.length ? parts.map(p => `${p.name} x${p.qty||1}`).join(', ') : '-';
+    const svcStr = services.length ? services.map(s => s.description || s.name || '').filter(Boolean).join(', ') : '-';
+    return `<tr>
+      <td><span class="font-mono" style="color:var(--primary)">${o.number || '#' + o.id}</span></td>
+      <td>${o.cliente_name || '-'}</td>
+      <td class="font-mono">${o.plate || '-'}</td>
+      <td>${[o.model, o.year].filter(Boolean).join(' ') || '-'}</td>
+      <td>${dateShort(o.entryDate)}</td>
+      <td style="max-width:160px;font-size:0.82em">${svcStr}</td>
+      <td style="max-width:160px;font-size:0.82em">${partsStr}</td>
+      <td>${o.problem || '-'}</td>
+      <td>${money(o.total)}</td>
+      <td class="flex gap-2">
+        <button class="btn btn-outline btn-sm" onclick="openOrdenDetalle(${o.id})">Ver</button>
+        <button class="btn btn-outline btn-sm btn-icon" onclick="imprimirReciboOrden(${o.id})" title="Imprimir recibo">🖨</button>
+      </td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="10" class="empty-state">Sin órdenes entregadas registradas</td></tr>';
 }
 
 async function eliminarGarantia(id) {
@@ -1052,6 +1395,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
     document.getElementById('topbar-user').textContent = `👤 ${r.nombre} (${r.rol})`;
+    loadTallerNombre();
     startWAStatusPoll();
     showPage('dashboard');
   }

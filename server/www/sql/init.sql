@@ -111,6 +111,22 @@ CREATE TABLE IF NOT EXISTS pagos_empleados (
   amount REAL NOT NULL DEFAULT 0,
   date TEXT NOT NULL,
   note TEXT,
+  orderId INTEGER,
+  total_orden REAL,
+  porcentaje REAL,
+  estado TEXT NOT NULL DEFAULT 'pendiente',
+  liquidacion_id INTEGER,
+  FOREIGN KEY(employeeId) REFERENCES empleados(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS liquidaciones_empleados (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employeeId INTEGER NOT NULL,
+  total REAL NOT NULL DEFAULT 0,
+  date TEXT NOT NULL,
+  note TEXT,
+  items TEXT NOT NULL DEFAULT '[]',
+  createdAt TEXT NOT NULL DEFAULT (datetime('now','localtime')),
   FOREIGN KEY(employeeId) REFERENCES empleados(id) ON DELETE CASCADE
 );
 
@@ -210,7 +226,7 @@ CREATE INDEX IF NOT EXISTS idx_wa_mensajes_estado ON whatsapp_mensajes(estado);
 INSERT OR IGNORE INTO usuarios(id,username,password,name,role,active)
 VALUES(1,'admin','admin','Administrador','admin',1);
 
-INSERT OR IGNORE INTO counters(key,value) VALUES('order',0),('sale',0);
+INSERT OR IGNORE INTO counters(key,value) VALUES('order',0),('sale',0),('receipt',0);
 
 INSERT OR IGNORE INTO templates(key,label,body) VALUES
   ('ingresada','Ingresada al taller','Hola {cliente}, tu moto *{placa}* ({moto}) fue recibida en nuestro taller. Orden: *{orden}*. Te avisaremos cuando esté lista. ¡Gracias por tu confianza!'),
@@ -224,4 +240,22 @@ INSERT OR IGNORE INTO configuracion(clave,valor) VALUES
   ('modo_prueba','0'),
   ('numero_prueba',''),
   ('nombre_taller','Taller MotoFlow'),
-  ('prefijo_pais','57');
+  ('prefijo_pais','57'),
+  ('nit',''),
+  ('telefono',''),
+  ('direccion',''),
+  ('pie_recibo_orden','Gracias por su visita'),
+  ('pie_recibo_venta','Gracias por su compra'),
+  ('encabezado_orden',''),
+  ('encabezado_venta',''),
+  ('pie_recibo_custom','Gracias por su preferencia');
+
+CREATE TABLE IF NOT EXISTS recibos_custom (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  number TEXT NOT NULL UNIQUE,
+  cliente TEXT,
+  descripcion TEXT,
+  valor REAL NOT NULL DEFAULT 0,
+  fecha TEXT NOT NULL,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
