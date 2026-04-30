@@ -255,6 +255,7 @@ function ensureSchema() {
       FOREIGN KEY(employeeId) REFERENCES empleados(id) ON DELETE CASCADE
     )`);
     try { db.run("ALTER TABLE pagos_empleados ADD COLUMN liquidacion_id INTEGER"); } catch {}
+    try { db.run("ALTER TABLE ordenes ADD COLUMN asignadoId INTEGER"); } catch {}
     saveDB();
   } catch (e) { console.error('[DB] ensureSchema:', e.message); }
 }
@@ -603,8 +604,8 @@ export async function startDBServer(port) {
            LIMIT 20`, [like, like]);
       const productos = query(
         `SELECT id, code, name, shelf, stock, price FROM productos
-           WHERE active=1 AND (LOWER(name) LIKE ? OR LOWER(code) LIKE ?)
-           LIMIT 20`, [like, like]);
+           WHERE active=1 AND (LOWER(name) LIKE ? OR LOWER(code) LIKE ? OR LOWER(COALESCE(shelf,'')) LIKE ?)
+           LIMIT 20`, [like, like, like]);
       res.json({ ordenes, clientes, productos });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -788,7 +789,14 @@ export async function startDBServer(port) {
 
       // ─── Vista Kanban (frontend usa /php/motos?action=kanban; en realidad son ordenes) ───
       if (rawResource === 'motos' && action === 'kanban') {
-        const rows = query(`SELECT o.*, c.name as cliente_name, c.phone as cliente_phone, m.plate, m.model, m.year, o.problem as problem FROM ordenes o LEFT JOIN clientes c ON c.id=o.customerId LEFT JOIN motos m ON m.id=o.bikeId WHERE o.active=1 AND o.status != 'entregada' ORDER BY o.id DESC`);
+        const rows = query(
+          `SELECT o.*, c.name as cliente_name, c.phone as cliente_phone, m.plate, m.model, m.year,
+                  e.name as asignado_name
+           FROM ordenes o
+           LEFT JOIN clientes c ON c.id=o.customerId
+           LEFT JOIN motos m ON m.id=o.bikeId
+           LEFT JOIN empleados e ON e.id=o.asignadoId
+           WHERE o.active=1 AND o.status != 'entregada' ORDER BY o.id DESC`);
         return res.json(rows.map(r => parseRow('ordenes', r)));
       }
       // ─── Cambio de estado desde el kanban: redirige al update de ordenes ───
@@ -810,14 +818,28 @@ export async function startDBServer(port) {
           const all = data.all === '1' || data.all === 1;
           const where = all ? '' : "WHERE o.active=1 AND o.status != 'entregada'";
           return res.json(
-            query(`SELECT o.*, c.name as cliente_name, m.plate, m.model, m.year, m.color FROM ordenes o LEFT JOIN clientes c ON c.id=o.customerId LEFT JOIN motos m ON m.id=o.bikeId ${where} ORDER BY o.id DESC`)
+            query(`SELECT o.*, c.name as cliente_name, m.plate, m.model, m.year, m.color,
+                          e.name as asignado_name, e.role as asignado_role
+                   FROM ordenes o
+                   LEFT JOIN clientes c ON c.id=o.customerId
+                   LEFT JOIN motos m ON m.id=o.bikeId
+                   LEFT JOIN empleados e ON e.id=o.asignadoId
+                   ${where} ORDER BY o.id DESC`)
               .map(r => parseRow('ordenes', r))
           );
         }
         return res.json(query(`SELECT * FROM ${resource}`).map(r => parseRow(resource, r)));
       }
       if (action === 'get' && resource === 'ordenes') {
-        const row = query(`SELECT o.*, c.name as cliente_name, c.phone as cliente_phone, m.plate, m.model, m.year, m.color, m.year FROM ordenes o LEFT JOIN clientes c ON c.id=o.customerId LEFT JOIN motos m ON m.id=o.bikeId WHERE o.id=?`, [data.id])[0];
+        const row = query(
+          `SELECT o.*, c.name as cliente_name, c.phone as cliente_phone,
+                  m.plate, m.model, m.year, m.color,
+                  e.name as asignado_name, e.role as asignado_role
+           FROM ordenes o
+           LEFT JOIN clientes c ON c.id=o.customerId
+           LEFT JOIN motos m ON m.id=o.bikeId
+           LEFT JOIN empleados e ON e.id=o.asignadoId
+           WHERE o.id=?`, [data.id])[0];
         if (!row) return res.status(404).json({ error: 'Orden no encontrada' });
         return res.json(parseRow('ordenes', row));
       }

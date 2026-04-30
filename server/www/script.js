@@ -438,7 +438,7 @@ function renderOrdenDetalle(d) {
   const total = d.parts.reduce((a,p) => a + (p.qty||1)*(p.price||p.unitPrice||0), 0) + d.services.reduce((a,s) => a + (s.price||0), 0);
   document.getElementById('orden-detalle-content').innerHTML = `
     <div class="flex items-center gap-2 mb-4">
-      <button class="btn btn-ghost btn-sm" onclick="history.back()">← Atrás</button>
+      <button class="btn btn-ghost btn-sm" onclick="showPage('ordenes')">← Atrás</button>
       <h1 style="font-size:20px;font-weight:700">Orden <span class="font-mono">${d.number}</span></h1>
       <span class="badge badge-${d.status}">${STATUS_LABELS[d.status]}</span>
       ${locked ? '<span class="badge" style="background:#e2e8f0;color:#64748b">🔒 Bloqueada</span>' : ''}
@@ -479,6 +479,15 @@ function renderOrdenDetalle(d) {
             <textarea rows="2" ${locked?'disabled':''} onblur="actualizarCampoOrden(${d.id},'problem',this.value)">${d.problem||''}</textarea>
           </div>
           <div class="text-muted text-sm" style="grid-column:1/-1">Ingreso: ${dateShort(d.entryDate)}</div>
+          <div class="form-group" style="grid-column:1/-1">
+            <label>Trabajador asignado</label>
+            ${d.asignado_name
+              ? `<div style="padding:9px 12px;background:var(--bg);border-radius:var(--radius-sm);font-weight:600;display:flex;align-items:center;gap:8px">
+                  <span>👷</span>
+                  <span>${d.asignado_name}${d.asignado_role ? ` <span style="color:var(--text-muted);font-weight:400;font-size:12px">· ${d.asignado_role}</span>` : ''}</span>
+                </div>`
+              : `<span class="text-muted text-sm">Sin asignar</span>`}
+          </div>
         </div>
       </div>
     </div>
@@ -528,10 +537,13 @@ function renderOrdenDetalle(d) {
       </div>
       <div class="evidences-grid" id="od-evidences">
         ${d.evidences.length === 0 ? '<p class="text-muted text-sm">Sin fotos.</p>' :
-          d.evidences.map((src,i) => `<div class="evidence-item">
-            <img src="${src}" alt="evidencia">
-            ${!locked ? `<button class="evidence-remove" onclick="quitarFoto(${d.id},${i})">✕</button>` : ''}
-          </div>`).join('')}
+          d.evidences.map((src,i) => {
+            const canDel = !locked && d.status !== 'lista' && d.status !== 'entregada';
+            return `<div class="evidence-item">
+              <img src="${src}" alt="evidencia" style="cursor:zoom-in" onclick="verFoto('${src.replace(/'/g,"\\'")}')">
+              ${canDel ? `<button class="evidence-remove" onclick="quitarFoto(${d.id},${i})">✕</button>` : ''}
+            </div>`;
+          }).join('')}
       </div>
     </div>
     <div style="background:var(--primary);color:#fff;border-radius:var(--radius);padding:20px;display:flex;justify-content:space-between;align-items:center">
@@ -540,11 +552,48 @@ function renderOrdenDetalle(d) {
     </div>`;
 }
 
+let _pendingStatusChange = null;
+
 async function actualizarEstadoOrden(id, status) {
+  const oldStatus = _ordenActual?.status;
+  // Primera transición desde ingresada: exigir trabajador si aún no tiene uno
+  if (oldStatus === 'ingresada' && status !== 'ingresada' && !_ordenActual?.asignadoId) {
+    _pendingStatusChange = { id, status };
+    if (!empleadosData.length) await loadEmpleados();
+    const sel = document.getElementById('asignar-empleado');
+    if (sel) {
+      sel.innerHTML = '<option value="">Seleccionar trabajador...</option>' +
+        empleadosData.map(e =>
+          `<option value="${e.id}">${e.name}${e.role ? ' – ' + e.role : ''}</option>`
+        ).join('');
+    }
+    openModal('modal-asignar-trabajador');
+    return;
+  }
   const r = await api('ordenes', 'actualizar_estado', { id, status });
   if (r.error) { toast(r.error, 'error'); return; }
   toast('Estado actualizado');
   openOrdenDetalle(id);
+}
+
+async function confirmarAsignacion() {
+  if (!_pendingStatusChange) return;
+  const empId = document.getElementById('asignar-empleado')?.value;
+  if (!empId) { toast('Debes seleccionar un trabajador', 'warning'); return; }
+  const { id, status } = _pendingStatusChange;
+  const r = await api('ordenes', 'actualizar_estado', { id, status, asignadoId: parseInt(empId) });
+  if (r.error) { toast(r.error, 'error'); return; }
+  toast('Trabajador asignado y estado actualizado ✓', 'success');
+  closeModal('modal-asignar-trabajador');
+  _pendingStatusChange = null;
+  openOrdenDetalle(id);
+}
+
+function cancelarAsignacion() {
+  const pending = _pendingStatusChange;
+  _pendingStatusChange = null;
+  closeModal('modal-asignar-trabajador');
+  if (pending) openOrdenDetalle(pending.id); // recarga para resetear el select
 }
 
 async function actualizarCampoOrden(id, field, value) {
@@ -636,6 +685,27 @@ async function agregarFotos(orderId, input) {
     if (r.error) { toast(r.error, 'error'); }
   }
   openOrdenDetalle(orderId);
+}
+
+function verFoto(src) {
+  let overlay = document.getElementById('foto-visor-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'foto-visor-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:600;display:flex;align-items:center;justify-content:center;cursor:zoom-out';
+    overlay.innerHTML = `
+      <img id="foto-visor-img" src="" alt="foto" style="max-width:95vw;max-height:92vh;border-radius:10px;box-shadow:0 24px 80px rgba(0,0,0,.7);object-fit:contain">
+      <button onclick="cerrarFotoVisor()" style="position:fixed;top:18px;right:18px;background:rgba(255,255,255,.15);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:22px;width:44px;height:44px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1">✕</button>`;
+    overlay.addEventListener('click', e => { if (e.target === overlay) cerrarFotoVisor(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') cerrarFotoVisor(); });
+    document.body.appendChild(overlay);
+  }
+  document.getElementById('foto-visor-img').src = src;
+  overlay.style.display = 'flex';
+}
+function cerrarFotoVisor() {
+  const ov = document.getElementById('foto-visor-overlay');
+  if (ov) ov.style.display = 'none';
 }
 
 async function quitarFoto(orderId, idx) {

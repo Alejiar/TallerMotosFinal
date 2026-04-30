@@ -488,6 +488,25 @@
   </div>
 </div>
 
+<!-- MODAL ASIGNAR TRABAJADOR -->
+<div class="modal-overlay hidden" id="modal-asignar-trabajador">
+  <div class="modal" style="max-width:400px">
+    <button class="modal-close" onclick="cancelarAsignacion()">✕</button>
+    <h2>Asignar trabajador</h2>
+    <p class="text-muted text-sm" style="margin-bottom:18px">Para cambiar el estado debes asignar un trabajador responsable de esta orden.</p>
+    <div class="form-group">
+      <label>Trabajador *</label>
+      <select id="asignar-empleado">
+        <option value="">Seleccionar trabajador...</option>
+      </select>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="cancelarAsignacion()">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarAsignacion()">✓ Confirmar y cambiar estado</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay hidden" id="modal-pago">
   <div class="modal">
     <button class="modal-close" onclick="closeModal('modal-pago')">✕</button>
