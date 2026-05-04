@@ -354,7 +354,8 @@ function buildUpdate(table, data, id) {
   return { setClause: cols.map(c => `${c}=?`).join(','), vals };
 }
 
-// ── Auto-cleanup: elimina registros con más de 60 días ────────────
+// ── Auto-cleanup: elimina registros con más de 60 días (órdenes/facturas/recibos)
+//   y mensajes WhatsApp con más de 30 días ──────────────────────────────────────
 function runCleanup() {
   try {
     const cutoff = new Date();
@@ -387,6 +388,25 @@ function runCleanup() {
     // Pagos de empleados ya liquidados con más de 60 días
     exec(`DELETE FROM pagos_empleados WHERE estado='pagado' AND date <= ?`, [cutoffStr]);
 
+    // Ventas de mostrador (no vinculadas a orden) con más de 60 días
+    const oldVentas = query(
+      `SELECT id FROM ventas WHERE (type='mostrador' OR type IS NULL) AND date <= ?`, [cutoffStr]);
+    for (const v of oldVentas) {
+      exec('DELETE FROM caja WHERE refType=? AND refId=?', ['venta', v.id]);
+      exec('DELETE FROM ventas WHERE id=?', [v.id]);
+    }
+
+    // Recibos personalizados con más de 60 días
+    exec(`DELETE FROM recibos_custom WHERE fecha <= ?`, [cutoffStr]);
+
+    // Mensajes WhatsApp con más de 30 días
+    const msgCutoff = new Date();
+    msgCutoff.setDate(msgCutoff.getDate() - 30);
+    const msgCutoffStr = msgCutoff.toISOString().split('T')[0];
+    exec(`DELETE FROM whatsapp_mensajes WHERE fecha_envio IS NOT NULL AND fecha_envio <= ?`, [msgCutoffStr]);
+    // También limpiar mensajes pendientes muy antiguos (sin fecha_envio) creados hace > 30 días
+    exec(`DELETE FROM whatsapp_mensajes WHERE fecha_envio IS NULL AND createdAt IS NOT NULL AND createdAt <= ?`, [msgCutoffStr]);
+
     // Imágenes huérfanas en disco (no referenciadas por ninguna orden activa)
     try {
       const files = fs.readdirSync(UPLOADS_DIR);
@@ -403,8 +423,9 @@ function runCleanup() {
       }
     } catch {}
 
-    if (oldOrders.length > 0) {
-      console.log(`[Cleanup] ${oldOrders.length} órdenes antiguas eliminadas (>${cutoffStr})`);
+    const totalEliminado = oldOrders.length + oldVentas.length;
+    if (totalEliminado > 0) {
+      console.log(`[Cleanup] ${oldOrders.length} órdenes, ${oldVentas.length} ventas eliminadas (>${cutoffStr})`);
     }
   } catch (e) {
     console.error('[Cleanup] Error:', e.message);
@@ -448,6 +469,12 @@ export async function startDBServer(port) {
       fs.writeFileSync(path.join(UPLOADS_DIR, fname), buffer);
       res.json({ ok: true, url: `/uploads/${fname}` });
     } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── /api/local-ips ────────────────────────────────────────────
+  app.get('/api/local-ips', (req, res) => {
+    const ips = getLocalIPs();
+    res.json({ urls: ips.map(ip => `http://${ip}:${port}`) });
   });
 
   // ── /api/sync ─────────────────────────────────────────────────
@@ -862,8 +889,8 @@ export async function startDBServer(port) {
         const q = `%${(data.q || '').toLowerCase()}%`;
         const rows = query(
           `SELECT id, code, name, price, cost, stock, minStock, shelf FROM productos
-           WHERE active=1 AND (LOWER(name) LIKE ? OR LOWER(code) LIKE ?)
-           ORDER BY name LIMIT 20`, [q, q]);
+           WHERE active=1 AND (LOWER(name) LIKE ? OR LOWER(code) LIKE ? OR LOWER(COALESCE(shelf,'')) LIKE ?)
+           ORDER BY name LIMIT 20`, [q, q, q]);
         return res.json(rows);
       }
       if (action === 'buscar') {

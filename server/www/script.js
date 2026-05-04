@@ -80,6 +80,7 @@ async function doLogin() {
   document.getElementById('app').classList.remove('hidden');
   document.getElementById('topbar-user').textContent = `👤 ${res.nombre} (${res.rol})`;
   loadTallerNombre();
+  loadMobileUrl();
   startWAStatusPoll();
   loadStockAlertas();
   setInterval(loadStockAlertas, 5 * 60 * 1000);
@@ -107,6 +108,12 @@ const PAGE_TITLES = {
 };
 
 function showPage(page) {
+  // Cerrar overlays/modales abiertos para evitar bloqueos de UI
+  document.querySelectorAll('.modal-overlay:not(.hidden)').forEach(m => m.classList.add('hidden'));
+  const fotoVisor = document.getElementById('foto-visor-overlay');
+  if (fotoVisor) fotoVisor.style.display = 'none';
+  closeStockAlert();
+
   document.querySelectorAll('.pg').forEach(el => el.classList.remove('active'));
   const pg = document.getElementById(`pg-${page}`);
   if (pg) pg.classList.add('active');
@@ -352,6 +359,11 @@ async function cambiarEstadoKanban(id, status, currentStatus, asignadoId) {
     openModal('modal-asignar-trabajador');
     return;
   }
+  // Siempre mostrar modal de pago al entregar, sin importar el estado anterior
+  if (status === 'entregada') {
+    entregarOrden(id);
+    return;
+  }
   const r = await api('motos', 'cambiar_estado', { id, status });
   if (r.error) { toast(r.error, 'error'); return; }
   toast('Estado actualizado');
@@ -458,8 +470,8 @@ function renderOrdenDetalle(d) {
       <div style="margin-left:auto;display:flex;gap:8px">
         <button class="btn btn-outline" onclick="imprimirReciboOrden(${d.id})">🖨 Imprimir recibo</button>
         <button class="btn btn-ghost" onclick="verHistorialOrden(${d.id})">📜 Historial</button>
-        ${d.status === 'lista' ? `<button class="btn btn-primary" onclick="entregarOrden(${d.id})">Entregar y facturar</button>` : ''}
-        ${!locked && d.status !== 'entregada' ? `<button class="btn btn-success" onclick="finalizarOrden(${d.id})">Finalizar orden</button>` : ''}
+        ${!locked && d.status !== 'entregada' ? `<button class="btn btn-primary" onclick="entregarOrden(${d.id})">Entregar y facturar</button>` : ''}
+        ${!locked && d.status !== 'lista' && d.status !== 'entregada' ? `<button class="btn btn-success" onclick="finalizarOrden(${d.id})">Finalizar orden</button>` : ''}
       </div>
     </div>
     <div class="order-grid mb-4">
@@ -581,6 +593,11 @@ async function actualizarEstadoOrden(id, status) {
         ).join('');
     }
     openModal('modal-asignar-trabajador');
+    return;
+  }
+  // Siempre mostrar modal de pago al entregar, sin importar el estado anterior
+  if (status === 'entregada') {
+    entregarOrden(id);
     return;
   }
   const r = await api('ordenes', 'actualizar_estado', { id, status });
@@ -1494,6 +1511,20 @@ async function doSearch() {
   }, 350);
 }
 
+// ─── URL acceso móvil ─────────────────────────
+async function loadMobileUrl() {
+  try {
+    const data = await fetch('/api/local-ips').then(r => r.json()).catch(() => null);
+    const urlEl = document.getElementById('topbar-mobile-url');
+    if (!urlEl) return;
+    if (data?.urls?.length) {
+      urlEl.textContent = `📱 ${data.urls[0]}`;
+      urlEl.style.display = '';
+      urlEl.title = `Ingresa desde el celular: ${data.urls.join(' / ')}`;
+    }
+  } catch {}
+}
+
 // ─── Init ─────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   // Inicializar fecha caja
@@ -1524,6 +1555,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('app').classList.remove('hidden');
     document.getElementById('topbar-user').textContent = `👤 ${r.nombre} (${r.rol})`;
     loadTallerNombre();
+    loadMobileUrl();
     startWAStatusPoll();
     showPage('dashboard');
   }
